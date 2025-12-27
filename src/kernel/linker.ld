@@ -1,3 +1,5 @@
+OUTPUT_ARCH("riscv")
+
 ENTRY(_start)
 
 SECTIONS{
@@ -7,8 +9,8 @@ SECTIONS{
     /* C stack should start at address 0x80000000 and grow downwards, since hardware loads our kernel to address 0x80000000 and up, stack can safely run from 0x80000000 and downwards*/
     /* 0x80000 is our where our .text start*/
 
-    . = 0x80000000
-    
+    . = 0x80000000;
+
     .text : {
         *(.text.entry)      /* put _start here */
         *(.text*)           /* rest of the codes */
