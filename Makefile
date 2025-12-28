@@ -3,7 +3,9 @@ CROSS_PLATFORM = $(ARCH)-unknown-elf
 CC = gcc
 KERNEL = kernel
 
-CFLAGS = -march=rv64gc -mabi=lp64 -Wall -nostdlib -nostartfiles -ffreestanding -nostdinc -g
+CFLAGS = -march=rv64gc -mabi=lp64 -mcmodel=medany -Wall -nostdlib -nostartfiles -ffreestanding -nostdinc -g
+CFLAGS += -I$(shell $(CROSS_PLATFORM)-$(CC) -print-file-name=include)
+CFLAGS += -Iinclude
 
 KER_PATH = src/kernel
 
@@ -32,11 +34,12 @@ build/$(KERNEL).elf: $(KER_OBJ) $(ASM_OBJ)
 clean:
 	rm -rf build
 
+# `-nographic` is conflict with `-serial stdio`, so we use `-display none` instead
 run:
-	qemu-system-$(ARCH) -machine virt -nographic -bios none -kernel build/$(KERNEL).elf
+	qemu-system-$(ARCH) -machine virt -display none -bios none -kernel build/$(KERNEL).elf -serial null -serial stdio
 
 debug:
-	qemu-system-$(ARCH) -machine virt -nographic -bios none -kernel build/$(KERNEL).elf -S -s
+	qemu-system-$(ARCH) -machine virt -display none -bios none -kernel build/$(KERNEL).elf -S -s
 
 dump:
 	$(CROSS_PLATFORM)-objdump -d build/$(KERNEL).elf

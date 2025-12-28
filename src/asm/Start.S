@@ -2,10 +2,15 @@
     .globl _start
 
 _start:
-    /* Set the global pointer (optional but good practice if you use small data) */
-    la      gp, __global_pointer$
+    /* Set the global pointer (optional but good practice if using small data) */
+    /* -mcmodel=tiny, optimize for memory footprint and performance in embedded systems 
+    by keeping data sections within a small address space */
+    /* la      gp, __global_pointer$ */
 
     /* Set up stack pointer */
+
+    /* la      t0, _start */
+    /* mv      sp, t0 */
     la      sp, _stack_top
 
     /* Zero out .bss section: for (p = _sbss; p < _ebss; p++) *p = 0; */

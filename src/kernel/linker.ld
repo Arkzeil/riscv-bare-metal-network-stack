@@ -2,6 +2,11 @@ OUTPUT_ARCH("riscv")
 
 ENTRY(_start)
 
+PHDRS {
+    text PT_LOAD FLAGS(5);   /* R + X = 4 + 1 */
+    data PT_LOAD FLAGS(6);   /* R + W = 4 + 2 */
+}
+
 SECTIONS{
     /* QEMU virt machine typically starts here for bare-metal kernels */
     
@@ -14,15 +19,15 @@ SECTIONS{
     .text : {
         *(.text.entry)      /* put _start here */
         *(.text*)           /* rest of the codes */
-    }
+    } :text
 
     .rodata : {
         *(.rodata*)
-    }
+    } :text
 
     .data : {
         *(.data*)
-    }
+    } :data
 
     /* uninitialized global variable. (NOLOAD):link the program properly but must not be loaded to memory, since bss are all 0*/
     /* but in ELF, those initialized to 0 will be in .bss, uninitialized variables will be in COMMON section*/
