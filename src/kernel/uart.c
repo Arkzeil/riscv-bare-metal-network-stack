@@ -2,24 +2,31 @@
 
 void uart_init(uint32_t baudrate, uint64_t clock_freq) {
     unsigned int divisor = clock_freq / baudrate;
-    UART_DIV = (unsigned char)(divisor & 0xFF);
-    UART_TXCTRL = 0x01; // Enable transmitter
-    UART_RXCTRL = 0x01; // Enable receiver
+    // Enable DLAB to set baud rate divisor
+    UART_LCR |= LCR_DLAB;
+    UART_LSB = (unsigned char)(divisor & 0xFF);         //
+    UART_MSB = (unsigned char)((divisor >> 8) & 0xFF);  //
+    UART_LCR &= ~LCR_DLAB; // Disable DLAB
+
+    // Set data format: 8 bits, no parity, one stop bit
+    UART_LCR = 0x03;
+
+    // Enable FIFO, clear them, with 14-byte threshold
+    UART_FCR = FCR_FIFO_ENABLE | FCR_FIFO_CLEAR;
 }
 
-
 void uart_putc(char c) {    
-    while (UART_TXDATA & 0x80) // Wait until TX is ready
+    while (UART_THR & 0x80) // Wait until TX is ready
         asm volatile ("nop");
-    
-    UART_TXDATA = (unsigned char)c;
+
+    UART_THR = (unsigned char)c;
 }
 
 char uart_getc(void) {
-    while (UART_RXDATA & 0x80) // Wait until RX has data
+    while (UART_RHR & 0x80) // Wait until RX has data
         asm volatile ("nop");
 
-    return (char)(UART_RXDATA & 0xFF);
+    return (char)(UART_RHR & 0xFF);
 }
 
 void uart_puts(const char *str) {
