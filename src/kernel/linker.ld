@@ -17,7 +17,7 @@ SECTIONS{
     . = 0x80000000;
 
     .text : {
-        *(.text.entry)      /* put _start here */
+        KEEP(*(.text.entry))      /* put _start here */
         *(.text*)           /* rest of the codes */
     } :text
 

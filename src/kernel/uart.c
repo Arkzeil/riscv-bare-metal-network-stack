@@ -16,14 +16,14 @@ void uart_init(uint32_t baudrate, uint64_t clock_freq) {
 }
 
 void uart_putc(char c) {    
-    while (UART_THR & 0x80) // Wait until TX is ready
+    while (!(UART_LSR & (1 << 5) ) ) // Wait until TX is ready (Transmitter Holding Register Empty)
         asm volatile ("nop");
 
     UART_THR = (unsigned char)c;
 }
 
 char uart_getc(void) {
-    while (UART_RHR & 0x80) // Wait until RX has data
+    while (!(UART_LSR & (1 << 0) ) ) // Wait until RX has data (DR bit set)
         asm volatile ("nop");
 
     return (char)(UART_RHR & 0xFF);
@@ -47,4 +47,24 @@ int uart_gets(char *buf, int maxlen) {
     }
     buf[i] = '\0';
     return i;
+}
+
+void uart_b2x(unsigned int b){
+    int i;
+    unsigned int t;
+    uart_puts("0x");
+    // take [32,29] then [28,25] ...
+    for(i = 28; i >=0; i-=4){
+        // this is the equivalent to following method, as '0' = 0x30 and 0x37 + 10 = 'A'
+        // thus convert to ASCII
+        t = (b >> i) & 0xF;
+        t += (t > 9 ? 0x37:0x30);
+        uart_putc(t);
+    }
+}
+
+void uart_puts_fixed(const char *str, size_t len) {
+    for (size_t i = 0; i < len; i++) {
+        uart_putc(str[i]);
+    }
 }

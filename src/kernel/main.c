@@ -1,8 +1,9 @@
 #include <stdint.h>
 #include "kernel/uart.h"
+#include "kernel/dtb.h"
 
 void main(void) {
-    volatile uint64_t counter = 0;
+    // volatile uint64_t counter = 0;
     char buf[10];
 
     uart_init(115200, 100000000); // Initialize UART with 115200 baud rate and 100MHz clock
@@ -10,9 +11,9 @@ void main(void) {
     uart_gets(buf, sizeof(buf));
     uart_puts("You entered: ");
     uart_puts(buf);
-    
-    // while (1) {
-    //     asm volatile ("nop");
-    //     counter++;
-    // }
+    uart_putc('\n');
+
+    fdt_traverse(initramfs_callback);
+
+    uart_puts("End of main.\n");
 }

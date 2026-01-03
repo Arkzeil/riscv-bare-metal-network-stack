@@ -36,10 +36,13 @@
 #define LSR_RX_READY    (1 << 0)
 #define LSR_TX_IDLE     (1 << 5)
 
+// no effect in virt machine, but required for real hardware compatibility
 void uart_init(uint32_t baudrate, uint64_t clock_freq);
 void uart_putc(char c);
 char uart_getc(void);
 void uart_puts(const char *str);
 int uart_gets(char *buf, int maxlen);
+void uart_b2x(unsigned int b);
+void uart_puts_fixed(const char *str, size_t len);
 
 #endif
