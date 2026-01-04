@@ -13,7 +13,7 @@ void main(void) {
     uart_puts(buf);
     uart_putc('\n');
 
-    fdt_traverse(initramfs_callback);
+    fdt_traverse(dtb_callback);
 
     uart_puts("End of main.\n");
 }

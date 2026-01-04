@@ -2,11 +2,12 @@
 
 extern void* _dtb_addr;
 
-int initramfs_callback(char *string_addr, unsigned int prop_len){
+int dtb_callback(char *string_addr, unsigned int prop_len){
     if(string_comp_l(string_addr, "ns16550a", prop_len) == 0)
         return 1;
-    else
-        return 0;
+    else if(string_comp_l(string_addr, "virtio,mmio", prop_len) == 0)
+        return 2;
+    return 0;
 }
 
 uint64_t parse_dtb_unit_name(char *unit_name){
