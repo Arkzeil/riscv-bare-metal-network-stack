@@ -37,16 +37,25 @@ clean:
 # `-nographic` is conflict with `-serial stdio`, so we use `-display none` instead
 # The virt machine simulate UART on serial port 0 by default, so we map it to stdio
 run:
-	qemu-system-$(ARCH) -machine virt -display none -bios none -kernel build/$(KERNEL).elf -serial stdio
+	qemu-system-$(ARCH) -machine virt -display none -bios none \
+	-kernel build/$(KERNEL).elf -serial stdio
+
+net:
+	qemu-system-riscv64 -machine virt -display none -bios none \
+	-kernel build/$(KERNEL).elf -serial stdio \
+	-netdev user,id=net0,hostfwd=udp::5555-:5555 \
+	-device virtio-net-device,netdev=net0
 
 debug:
-	qemu-system-$(ARCH) -machine virt -display none -bios none -kernel build/$(KERNEL).elf -serial stdio -S -s
+	qemu-system-$(ARCH) -machine virt -display none -bios none \
+	-kernel build/$(KERNEL).elf -serial stdio -S -s
 
 # tell QEMU to dump dtb to a file and use dtc to convert to human-readable dts format
 # dtc can be installed via `sudo apt install device-tree-compiler`
 # no space after the comma in dumpdtb=location
 dtb:
-	qemu-system-$(ARCH) -machine virt,dumpdtb=build/virt.dtb -display none -bios none -kernel build/$(KERNEL).elf -serial stdio
+	qemu-system-$(ARCH) -machine virt,dumpdtb=build/virt.dtb \
+	-display none -bios none -kernel build/$(KERNEL).elf -serial stdio
 	dtc -I dtb -O dts -o virt.dts build/virt.dtb
 
 dump:
