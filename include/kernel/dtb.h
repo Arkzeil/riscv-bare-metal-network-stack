@@ -6,6 +6,8 @@
 #include "kernel/utils.h"
 #include "kernel/uart.h"
 
+#define dtb_debug 0
+
 // The structure block is composed of a sequence of pieces, each beginning with a token, that is, a big-endian 32-bit integer.
 // Some tokens are followed by extra data
 #define FDT_BEGIN_NODE 0x00000001   // marks the beginning of a node’s representation. It shall be followed by the node’s unit name as extra data. The name is stored as a null-terminated string The node name is followed by zeroed padding bytes, if necessary for alignment, and then the next token,

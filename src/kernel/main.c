@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include "kernel/uart.h"
 #include "kernel/dtb.h"
+#include "driver/virt_mmio.h"
 
 void main(void) {
     // volatile uint64_t counter = 0;
@@ -14,6 +15,8 @@ void main(void) {
     uart_putc('\n');
 
     fdt_traverse(dtb_callback);
+
+    virt_find_all_devices();
 
     uart_puts("End of main.\n");
 }
