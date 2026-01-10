@@ -64,6 +64,7 @@ void virt_find_all_devices(void) {
             case 1:
                 uart_puts("Found Virtio Network Device.\n");
                 virt_print_device_info(device);
+                virt_mmio_negotiation(device);
                 break;
             case 2:
                 uart_puts("Found Virtio Block Device.\n");
@@ -76,3 +77,42 @@ void virt_find_all_devices(void) {
         }
     }
 }    
+
+int8_t virt_mmio_negotiation(virt_mmio_device_t* device) {
+    uart_puts("Starting Virtio MMIO handshake...\n");
+
+    volatile uint32_t *mmio = (uint32_t *)((uintptr_t)device);
+    uint32_t *status = mmio + (VIRTIO_MMIO_STATUS / 4); // Status register offset
+    uint32_t *device_features = mmio + (VIRTIO_MMIO_DEVICE_FEATURES / 4); // Device features offset
+    uint32_t *device_features_sel = mmio + (VIRTIO_MMIO_DEVICE_FEATURES_SEL / 4); // Device features select offset
+    uint32_t drv_low, drv_high;
+
+    *status = RESET;                                       // Reset device
+    *status |= ACKNOWLEDGE;                                // Acknowledge
+    *status |= DRIVER;                                     // Driver
+    // driver would set up queues and other structures here (omitted for now)
+    *status |= DRIVER_OK;                                  // driver OK
+    // Read Features
+    *device_features_sel = 0;                              // Select lower 32 bits
+    uint32_t dev_feat_low = *device_features;
+    *device_features_sel = 1;                              // Select higher 32 bits
+    uint32_t dev_feat_high = *device_features;
+    // choose features ()
+    drv_low = dev_feat_low & (1 << VIRTIO_NET_F_MAC);       //Accept MAC feature
+    drv_high = 0;                                          // No high features
+    // Write back accepted features
+    *device_features_sel = 0;                              // Select lower 32 bits
+    *device_features = drv_low;
+    *device_features_sel = 1;                              // Select higher 32 bits
+    *device_features = drv_high;
+    // Finalize initialization
+    *status |= FEATURES_OK;                                // features OK
+
+    if(!(*status & FEATURES_OK)) {
+        uart_puts("Virtio MMIO negotiation failed.\n");
+        return -1;
+    }
+
+    uart_puts("Virtio MMIO negotiation completed.\n");
+    return 0;
+}
