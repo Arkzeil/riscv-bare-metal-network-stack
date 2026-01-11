@@ -3,6 +3,8 @@
 // Carriage Return '\r'
 #define CR 13
 
+#include <stdint.h>
+
 char parse(const char c);
 
 int string_len(const char* str);
@@ -15,10 +17,13 @@ void string_set(char *str, int n, int size);
 // used for cpio length conversion(hex->int dec), it needs string length 
 int h2i(const char *str, int len); 
 // return a offset value to let i aligned to 'align' format
-int align_offset(unsigned int i, unsigned int align);
+int align_offset(uint32_t i, uint32_t align);
 // This one is for memory with 64bits
-int align_mem_offset(void* i, unsigned int align);
+int align_mem_offset(void* i, uint32_t align);
 // convert big endian to little endian 32bits
-unsigned int BE2LE(unsigned int BE);
+uint32_t BE2LE(uint32_t BE);
+
+void w32(uint32_t *addr, uint32_t val);
+uint32_t r32(uint32_t *addr);
 
 #endif

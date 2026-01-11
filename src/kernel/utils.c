@@ -82,19 +82,19 @@ int h2i(const char *str, int len){
     return res;
 }
 
-int align_offset(unsigned int i, unsigned int align){
+int align_offset(uint32_t i, uint32_t align){
     // (4-size%4) can get right value if size%4 != 0, so mod again to eliminate 0(if size%4 = 0, padding should be 0 instead of 4)
     return ((align - (i % align) ) % align);
 }
 
-int align_mem_offset(void* i, unsigned int align){
+int align_mem_offset(void* i, uint32_t align){
     // unsigned long long seemed not work properly?
     uintptr_t l = (uintptr_t)i;
     return ((align - (l % align) ) % align);
 }
 
-unsigned int BE2LE(unsigned int BE){
-    unsigned int LE = 0;
+uint32_t BE2LE(uint32_t BE){
+    uint32_t LE = 0;
     int i = 24;
 
     for(; i >= 0; i -= 8){
@@ -102,4 +102,12 @@ unsigned int BE2LE(unsigned int BE){
     }
 
     return LE;
+}
+
+void w32(uint32_t *addr, uint32_t val){
+    *((volatile uint32_t*)addr) = val;
+}
+
+uint32_t r32(uint32_t *addr){
+    return *((volatile uint32_t*)addr);
 }

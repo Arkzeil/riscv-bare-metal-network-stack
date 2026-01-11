@@ -1,18 +1,7 @@
 #include <driver/virt_mmio.h>
 #include <kernel/uart.h>
-
-void virt_mmio_init(virt_mmio_device_t* device, uint32_t device_id, uint32_t vendor_id) {
-    device->magic = 0x74726976; // "virt" in little-endian
-    device->version = 2; // Virtio version 2
-    device->device_id = device_id;
-    device->vendor_id = vendor_id;
-    device->host_features = 0;
-    device->guest_features = 0;
-    device->page_size = 4096; // 4KB page size
-    device->num_queues = 1; // Default to 1 queue
-    device->queue_size = 256; // Default queue size
-    device->config_generation = 0;
-}
+#include <kernel/utils.h>
+#include <kernel/mem.h>
 
 void virt_print_device_info(virt_mmio_device_t* device) {
     uart_puts("Virtio MMIO Device Info:\n");
@@ -65,6 +54,7 @@ void virt_find_all_devices(void) {
                 uart_puts("Found Virtio Network Device.\n");
                 virt_print_device_info(device);
                 virt_mmio_negotiation(device);
+                virt_mmio_net_init(device);
                 break;
             case 2:
                 uart_puts("Found Virtio Block Device.\n");
@@ -87,26 +77,26 @@ int8_t virt_mmio_negotiation(virt_mmio_device_t* device) {
     uint32_t *device_features_sel = mmio + (VIRTIO_MMIO_DEVICE_FEATURES_SEL / 4); // Device features select offset
     uint32_t drv_low, drv_high;
 
-    *status = RESET;                                       // Reset device
-    *status |= ACKNOWLEDGE;                                // Acknowledge
-    *status |= DRIVER;                                     // Driver
+    w32(status, RESET);                                    // Reset device
+    w32(status, ACKNOWLEDGE);                              // Acknowledge
+    w32(status, DRIVER);                                    // Driver
     // driver would set up queues and other structures here (omitted for now)
-    *status |= DRIVER_OK;                                  // driver OK
+    w32(status, DRIVER_OK);                                  // driver OK
     // Read Features
-    *device_features_sel = 0;                              // Select lower 32 bits
-    uint32_t dev_feat_low = *device_features;
-    *device_features_sel = 1;                              // Select higher 32 bits
-    uint32_t dev_feat_high = *device_features;
+    w32(device_features_sel, 0);                              // Select lower 32 bits
+    uint32_t dev_feat_low = r32(device_features);
+    w32(device_features_sel, 1);                              // Select higher 32 bits
+    uint32_t dev_feat_high = r32(device_features);
     // choose features ()
     drv_low = dev_feat_low & (1 << VIRTIO_NET_F_MAC);       //Accept MAC feature
     drv_high = 0;                                          // No high features
     // Write back accepted features
-    *device_features_sel = 0;                              // Select lower 32 bits
-    *device_features = drv_low;
-    *device_features_sel = 1;                              // Select higher 32 bits
-    *device_features = drv_high;
+    w32(device_features_sel, 0);                              // Select lower 32 bits
+    w32(device_features, drv_low);
+    w32(device_features_sel, 1);                              // Select higher 32 bits
+    w32(device_features, drv_high);
     // Finalize initialization
-    *status |= FEATURES_OK;                                // features OK
+    w32(status, FEATURES_OK);                                // features OK
 
     if(!(*status & FEATURES_OK)) {
         uart_puts("Virtio MMIO negotiation failed.\n");
@@ -114,5 +104,21 @@ int8_t virt_mmio_negotiation(virt_mmio_device_t* device) {
     }
 
     uart_puts("Virtio MMIO negotiation completed.\n");
+    return 0;
+}
+
+int8_t virt_mmio_net_init(virt_mmio_device_t* device) {
+    // Initialization specific to Virtio Network Device
+    uart_puts("Initializing Virtio Network Device...\n");
+    
+    // Setup RX queues
+    struct virtq *rx_queue = mem_alloc(sizeof(struct virtq));
+    if(rx_queue == NULL) {
+        uart_puts("Failed to allocate memory for RX queue.\n");
+        return -1;
+    }
+
+
+    uart_puts("Virtio Network Device initialized.\n");
     return 0;
 }

@@ -7,6 +7,11 @@ PHDRS {
     data PT_LOAD FLAGS(6);   /* R + W = 4 + 2 */
 }
 
+MEMORY
+{
+    RAM (rwx) : ORIGIN = 0x80000000, LENGTH = 128M
+}
+
 SECTIONS{
     /* QEMU virt machine typically starts here for bare-metal kernels */
     
@@ -19,15 +24,15 @@ SECTIONS{
     .text : {
         KEEP(*(.text.entry))      /* put _start here */
         *(.text*)           /* rest of the codes */
-    } :text
+    } > RAM :text
 
     .rodata : {
         *(.rodata*)
-    } :text
+    } > RAM :text
 
     .data : {
         *(.data*)
-    } :data
+    } > RAM :data
 
     /* uninitialized global variable. (NOLOAD):link the program properly but must not be loaded to memory, since bss are all 0*/
     /* but in ELF, those initialized to 0 will be in .bss, uninitialized variables will be in COMMON section*/
@@ -41,12 +46,20 @@ SECTIONS{
         *(.bss*)
         *(COMMON)
         _ebss = .;          /* bss end */
-    }
+    } > RAM
 
     /* Define a simple stack region after BSS */
-    . = ALIGN(16);
-    . += 0x4000;         /* 16 KB stack */
-    _stack_top = .;
+    .stack (NOLOAD) : {
+        . = ALIGN(8);
+        . += 0x4000;         /* 16 KB stack */    
+        __stack_top = .;
+    } > RAM
+
+    .heap (NOLOAD) : {
+        __heap_start = .;
+        . = ORIGIN(RAM) + LENGTH(RAM);
+        __heap_end = .;
+    } > RAM
 
     _end = .;
 }

@@ -14,7 +14,7 @@ _start:
 
     /* la      t0, _start */
     /* mv      sp, t0 */
-    la      sp, _stack_top
+    la      sp, __stack_top
     /* Pass the dtb address inside a1 (x11) to _dtb_addr */
     la      t0, _dtb_addr
     sd      a1, 0(t0)
