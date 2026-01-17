@@ -34,6 +34,17 @@
       + On the RISC-V `virt` machine, `virtio-net-device` creates a VirtIO-MMIO device.
       + The `netdev=net0` flag acts as the "cable" connecting this hardware to your backend.
 
+## Linker Script
++ `PHDRS` defines section permission
++ `NOLOAD` tells the linker:
+  + Reserve address space in RAM
+  + Do not put anything in the ELF file
+  + Do not generate a PT_LOAD file range
+  + For sections or spaces having no initial contents
+    + .bss
+    + heap
+    + stack
+
 ## File layout
 ```
 .

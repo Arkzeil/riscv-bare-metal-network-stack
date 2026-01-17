@@ -8,7 +8,7 @@
 #define VIRTIO_SIZE         0x1000
 #define VIRTIO_SLOTS        8
 
-#define ALIGN_TO_PAGE      (4096 - sizeof(struct virtq_used))
+#define ALIGN_TO_PAGE       (4096 - sizeof(struct virtq_used))
 
 #define GPIO_BASE_ADDR       0x10000000UL
 #define VIRT_MMIO(x)         (GPIO_BASE_ADDR + (x))
@@ -17,19 +17,38 @@
 #define VIRT_MMIO_NET_HDR    VIRT_MMIO(0x1000)
 #define VIRT_MMIO_BLOCK_HDR  VIRT_MMIO(0x2000)
 
-// Virtio MMIO register offsets
+/* 
+VirtIO MMIO register offsets 
+*/
 #define VIRTIO_MMIO_STATUS              0x070 
 #define VIRTIO_MMIO_DEVICE_FEATURES     0x010 
 #define VIRTIO_MMIO_DEVICE_FEATURES_SEL 0x014 
 #define VIRTIO_MMIO_DRIVER_FEATURES     0x020 
 #define VIRTIO_MMIO_DRIVER_FEATURES_SEL 0x024 
-// Virtio MMIO status bits
-#define RESET       0
-#define ACKNOWLEDGE 1 
-#define DRIVER      2 
-#define FEATURES_OK 8 
+#define VIRTIO_MMIO_CONFIG              0x100
+/*
+VirtIO MMIO Queue register offsets
+*/
+#define VIRTIO_MMIO_QUEUE_SEL           0x030
+#define VIRTIO_MMIO_QUEUE_NUM_MAX       0x034
+#define VIRTIO_MMIO_QUEUE_NUM           0x038
+#define VIRTIO_MMIO_QUEUE_READY         0x044
+#define VIRTIO_MMIO_QUEUE_DESC_LOW      0x080
+#define VIRTIO_MMIO_QUEUE_DESC_HIGH     0x084
+#define VIRTIO_MMIO_QUEUE_AVAIL_LOW     0x090
+#define VIRTIO_MMIO_QUEUE_AVAIL_HIGH    0x094
+#define VIRTIO_MMIO_QUEUE_USED_LOW      0x0A0
+#define VIRTIO_MMIO_QUEUE_USED_HIGH     0x0A4
+/* 
+    Virtio MMIO status bits 
+*/
+#define ACKNOWLEDGE 1
+#define DRIVER      2
 #define DRIVER_OK   4
-// Virtio device feature bits
+#define FEATURES_OK 8
+/*
+    Virtio device feature bits
+*/
 #define VIRTIO_F_NOTIFY_ON_EMPTY    0
 #define VIRTIO_F_ANY_LAYOUT         5
 #define VIRTIO_F_RING_INDIRECT_DESC 6
@@ -51,6 +70,15 @@
 #define VIRTIO_NET_F_HOST_UFO       30
 
 #define DESC_QUEUE_SIZE 256
+#define QUEUE_BUF_SIZE 2048
+
+/*
+    Descriptor flag bits
+*/
+// #define VIRTQ_DESC_F_READONLY 0 // device reads from buffer
+#define VIRTQ_DESC_F_NEXT 1     // descriptor continues at next
+#define VIRTQ_DESC_F_WRITE 2    // device writes into this buffer; if not set, device reads from it
+#define VIRTQ_DESC_F_INDIRECT 4 // descriptor points to an array of descriptors (indirect)
 
 typedef struct {
     uint32_t magic;             // always "virt" (0x74726976)
@@ -66,13 +94,11 @@ typedef struct {
     // Device-specific configuration space follows
 } virt_mmio_device_t;
 
+// Virtio MMIO queue structure: each descpriptor describes a buffer
 struct virtq_desc {
     uint64_t addr;      // Address of buffer (guest-physical)
     uint32_t len;       // Length
-    uint16_t flags;     // VIRTQ_DESC_F_*
-                        // VIRTQ_DESC_F_NEXT = 1: descriptor continues at next
-                        // VIRTQ_DESC_F_WRITE = 2: device writes into this buffer; if not set, device reads from it
-                        // VIRTQ_DESC_F_INDIRECT = 4: descriptor points to an array of descriptors (indirect
+    uint16_t flags;     // bits set with VIRTQ_DESC_F_* 
     uint16_t next;      // We chain unused descriptors via this field
 };
 
@@ -85,7 +111,6 @@ Avail Ring:
         1. Watches idx
         2. Consumes new entries
 */
-
 struct virtq_avail {
     uint16_t flags;
     uint16_t idx;
@@ -102,10 +127,9 @@ Used Ring:
         1. Polls idx.
         2. Processes any new ring[...] entries.
 */
-
 struct virtq_used_elem {
     uint32_t id;  // index of start descriptor
-    uint32_t len; // total bytes written/read
+    uint32_t len; // total bytes written/read (not including virt-io net header)
 };
 
 struct virtq_used {
@@ -117,10 +141,10 @@ struct virtq_used {
 
 // virtio queue
 struct virtq {
-    struct virtq_desc desc[DESC_QUEUE_SIZE];     // 16 bytes each
-    struct virtq_avail avail;        // 2 bytes + (2 * 256) + 2
-    uint8_t padding[ALIGN_TO_PAGE];  // Padding to 4KB boundary
-    struct virtq_used used;          // 4 bytes + (8 * 256) + 2
+    struct virtq_desc desc[DESC_QUEUE_SIZE];        // 16 bytes each
+    struct virtq_avail avail;                       // 2 bytes + (2 * 256) + 2
+    struct virtq_used used;                         // 4 bytes + (8 * 256) + 2
+    uint8_t padding[ALIGN_TO_PAGE];                 // pad to multiple of page size
 };
 
 // Negotiated VIRTIO_NET_F_MAC, the device sets a stable MAC here
@@ -137,20 +161,25 @@ struct virt_driver {
     uint32_t num_queues;
     void (*init)(struct virt_driver* drv);
 };
-
-// minimal header for virtio net packets
-// Each received packet has:
-// 1. A virtio‑net header (L1, physical layer?)
-// 2. The actual Ethernet frame
+/*
+minimal header for virtio net packets
+Each received packet has:
+    1. A virtio‑net header (L1, physical layer?)
+    2. The actual Ethernet frame (L2/L3/L4)
+*/
+// Generic Segmentation Offload (GSO): allows guest kernel stacks to 
+// transmit over-sized TCP segments that far exceed the kernel interface’s MTU
 struct virtio_net_hdr {
     uint8_t flags;
-    uint8_t gso_type;
+    uint8_t gso_type;           
     uint16_t hdr_len;
     uint16_t gso_size;
     uint16_t csum_start;
     uint16_t csum_offset;
-    uint16_t num_buffers; // maybe absent in some legacy setups
+    uint16_t num_buffers;       // maybe absent in some legacy setups
 };
+
+int8_t virt_mmio_net_virtq_init(virt_mmio_device_t* device);
 
 void virt_print_device_info(virt_mmio_device_t* device);
 void virt_find_all_devices(void);
@@ -158,7 +187,5 @@ void virt_find_all_devices(void);
 uint32_t virt_mmio_read(virt_mmio_device_t* device, uint32_t offset);
 void virt_mmio_write(virt_mmio_device_t* device, uint32_t offset, uint32_t value);
 int8_t virt_mmio_negotiation(virt_mmio_device_t* device);
-
-int8_t virt_mmio_net_init(virt_mmio_device_t* device);
 
 #endif // VIRT_MMIO_H

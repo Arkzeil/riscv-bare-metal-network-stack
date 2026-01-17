@@ -46,20 +46,19 @@ SECTIONS{
         *(.bss*)
         *(COMMON)
         _ebss = .;          /* bss end */
-    } > RAM
+    } > RAM :data
+
+    /* Heap and Stack are not sections and are not loaded */
 
     /* Define a simple stack region after BSS */
-    .stack (NOLOAD) : {
-        . = ALIGN(8);
-        . += 0x4000;         /* 16 KB stack */    
-        __stack_top = .;
-    } > RAM
+    . = ALIGN(8);
+    . += 0x4000;         /* 16 KB stack */    
+    __stack_top = .;
 
-    .heap (NOLOAD) : {
-        __heap_start = .;
-        . = ORIGIN(RAM) + LENGTH(RAM);
-        __heap_end = .;
-    } > RAM
+    . = ALIGN(8);
+    __heap_start = .;
+    . = ORIGIN(RAM) + LENGTH(RAM);
+    __heap_end = .;
 
     _end = .;
 }

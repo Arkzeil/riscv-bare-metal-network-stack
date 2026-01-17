@@ -2,29 +2,29 @@
 #include "kernel/utils.h"
 
 // Get the symbol _end from the linker script
+// these two extern symbols from linker script can be used in 
+// following codes
 extern void* __heap_start;
+extern uint8_t __heap_end[];
 
 // get the heap address
 /* 
-    >Linker scripts symbol declarations, by contrast, create an entry in the symbol table 
-    but do not assign any memory to them. Thus they are an address without a value. 
+    > Linker scripts symbol declarations, by contrast, create an entry in the symbol table 
+    but do not assign any memory to them. Thus "they are an address without a value". 
     This means that you cannot access the value of a linker script defined symbol - it has no value - 
     all you can do is use the address of a linker script defined symbol.
 */
-uint8_t *allocated = (uint8_t*)&__heap_start;
-uint64_t heap_offset = 0;
-uint32_t allocated_pages = 0;
+static uint8_t *allocated = (uint8_t*)&__heap_start;
+static uint32_t allocated_pages __attribute__((unused)) = 0;
 
 void *mem_alloc(uint32_t size) {
     size = (size + 7) & ~7; // 8-byte align
 
-    if(heap_offset + size > MAX_HEAP_SIZE) {
+    if(allocated + size > __heap_end)
         return NULL; // Out of memory
-    }
 
     uint8_t* mem = allocated;
     allocated += size;
-    heap_offset += size;
 
     return mem;
 }

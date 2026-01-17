@@ -52,15 +52,14 @@ void fdt_traverse(int (*callback)(char *, unsigned int)){
     unsigned int struct_size = BE2LE(fdt->size_dt_struct);
     // for manipulation of pointer
     char* struct_ptr = (char*)fdt + BE2LE(fdt->off_dt_struct);
-    char* string_ptr = (char*)fdt + BE2LE(fdt->off_dt_strings);
-    //struct_ptr += align_mem_offset((void*)struct_ptr, 4);
     
     //callback(cpio_addr);
-    uint64_t addr = 0;
+    uint64_t addr __attribute__((unused)) = 0;
 
     while(struct_ptr < ((char*)fdt + BE2LE(fdt->off_dt_struct) + struct_size)){
+        uint32_t ret __attribute__((unused)) = 0;
         uint32_t token = *(uint32_t*)struct_ptr;
-        int ret;
+        
         struct_ptr += 4;
         switch(BE2LE(token)){
         case FDT_NOP:
