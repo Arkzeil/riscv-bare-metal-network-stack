@@ -5,6 +5,7 @@
 
 static struct virtq *rx_queue;
 static struct virtq *tx_queue;
+static volatile uint32_t rx_last_used_idx = 0;
 
 int8_t virt_mmio_net_virtq_init(virt_mmio_device_t* device) {
     // Initialization specific to Virtio Network Device
@@ -32,13 +33,13 @@ int8_t virt_mmio_net_virtq_init(virt_mmio_device_t* device) {
     for(uint32_t i = 0; i < DESC_QUEUE_SIZE; i++) {
         rx_queue->desc[i].addr = (uint64_t)queue_buf + (i * QUEUE_BUF_SIZE);
         rx_queue->desc[i].len = QUEUE_BUF_SIZE; // Example buffer length
-        rx_queue->desc[i].flags = 0; // Set appropriate flags
+        rx_queue->desc[i].flags = VIRTQ_DESC_F_WRITE; // Buffers must be device‑writable
         rx_queue->desc[i].next = 0; // No next descriptor
         rx_queue->avail.ring[i] = i; // Initialize available ring
 
-        tx_queue->desc[i].addr = (uint64_t)queue_buf + (i * QUEUE_BUF_SIZE);
+        tx_queue->desc[i].addr = 0;
         tx_queue->desc[i].len = QUEUE_BUF_SIZE; // Example buffer length
-        tx_queue->desc[i].flags = 0; // Set appropriate flags
+        tx_queue->desc[i].flags = 0; // TX descriptors are device‑read‑only
         tx_queue->desc[i].next = 0; // No next descriptor
         tx_queue->avail.ring[i] = i; // Initialize available ring
     }
@@ -54,15 +55,38 @@ int8_t virt_mmio_net_virtq_init(virt_mmio_device_t* device) {
 }
 
 void virt_mmio_net_send(const uint8_t* data, uint32_t length) {
-    // Placeholder implementation for sending data
     uart_puts("Sending data via Virtio Network Device...\n");
-    // Actual implementation would involve populating TX queue descriptors
+
+    // Find the next available descriptor
+    uint16_t desc_index = tx_queue->avail.ring[tx_queue->avail.idx % DESC_QUEUE_SIZE];
+    // Copy data to the descriptor buffer
+    mem_copy((void*)(uintptr_t)tx_queue->desc[desc_index].addr, data, length);
+    tx_queue->desc[desc_index].len = length;
+    // Update available ring (available to device to consume)
+    tx_queue->avail.idx++;
 }
 
 void virt_mmio_net_poll_rx(uint8_t* buffer, uint32_t* length) {
-    // Placeholder implementation for polling received data
     uart_puts("Polling for received data via Virtio Network Device...\n");
-    // Actual implementation would involve checking RX queue descriptors
+
+    while(rx_last_used_idx != rx_queue->used.idx) {
+        struct virtq_used_elem* used_elem = &(rx_queue->used.ring[rx_last_used_idx % DESC_QUEUE_SIZE]);
+        uint32_t desc_index = used_elem->id;
+        uint32_t len = used_elem->len;
+        if(len > *length) {
+            len = *length; // Truncate if buffer is smaller
+        }
+        mem_copy(buffer, (void*)(uintptr_t)rx_queue->desc[desc_index].addr, len);
+
+        // parse packet here if needed (e.g., skip virtio net header)
+        // parse_virtio_net_frame(buffer);
+
+        rx_queue->avail.ring[rx_queue->avail.idx % DESC_QUEUE_SIZE] = desc_index; // Reuse the descriptor
+        rx_queue->avail.idx++;
+        rx_last_used_idx++;
+    }
+    
+    rx_last_used_idx = rx_last_used_idx % DESC_QUEUE_SIZE;
 }
 
 
@@ -116,8 +140,8 @@ void virt_find_all_devices(void) {
             case 1:
                 uart_puts("Found Virtio Network Device.\n");
                 virt_print_device_info(device);
-                virt_mmio_negotiation(device);
                 virt_mmio_net_virtq_init(device);
+                virt_mmio_negotiation(device);
                 break;
             case 2:
                 uart_puts("Found Virtio Block Device.\n");
@@ -142,9 +166,9 @@ int8_t virt_mmio_negotiation(virt_mmio_device_t* device) {
     uart_puts("Starting Virtio MMIO handshake...\n");
 
     uint32_t *mmio = (uint32_t *)((uintptr_t)device);
-    uint32_t *status = mmio + (VIRTIO_MMIO_STATUS / 4);                     // Status register offset
-    uint32_t *device_features = mmio + (VIRTIO_MMIO_DEVICE_FEATURES / 4);   // Device features offset
-    uint32_t *device_features_sel = mmio + (VIRTIO_MMIO_DEVICE_FEATURES_SEL / 4); // Device features select offset
+    uint32_t *status = mmio + (VIRTIO_MMIO_STATUS / 4);                             // Status register offset
+    uint32_t *device_features = mmio + (VIRTIO_MMIO_DEVICE_FEATURES / 4);           // Device features offset
+    uint32_t *device_features_sel = mmio + (VIRTIO_MMIO_DEVICE_FEATURES_SEL / 4);   // Device features select offset
     uint32_t feat_low, feat_high;
     
     uint32_t *driver_queue_desc_low = mmio + (VIRTIO_MMIO_QUEUE_DESC_LOW / 4);      // Queue descriptor low offset
@@ -155,27 +179,26 @@ int8_t virt_mmio_negotiation(virt_mmio_device_t* device) {
     uint32_t *driver_used_high = mmio + (VIRTIO_MMIO_QUEUE_USED_HIGH / 4);          // Queue used ring high offset
     uint32_t *driver_queue_size = mmio + (DESC_QUEUE_SIZE / 4);                     // Queue size offset
     uint32_t *driver_queue_select = mmio + (VIRTIO_MMIO_QUEUE_SEL / 4);             // Queue select offset
-    uint32_t *driver_queue_ready = mmio + (VIRTIO_MMIO_QUEUE_READY / 4);             // Queue ready offset
-    uint32_t drv_low, drv_high;
+    uint32_t *driver_queue_ready = mmio + (VIRTIO_MMIO_QUEUE_READY / 4);            // Queue ready offset
 
     w32(status, 0x0);                                           // Reset device
-    w32(status, 1 << ACKNOWLEDGE);                                   // Acknowledge
-    w32(status, (1 << ACKNOWLEDGE) | (1 << DRIVER));                                        // Driver
+    w32(status, ACKNOWLEDGE);                                   // Acknowledge
+    w32(status, ACKNOWLEDGE | DRIVER);                          // Driver
     // Read Features
     w32(device_features_sel, 0);                                // Select lower 32 bits
     uint32_t dev_feat_low = r32(device_features);
     w32(device_features_sel, 1);                                // Select higher 32 bits
     uint32_t dev_feat_high = r32(device_features);
     // choose features ()
-    feat_low = dev_feat_low & (1 << VIRTIO_NET_F_MAC);           // Accept MAC feature
-    feat_high = dev_feat_high & 0;                                               // No high features
+    feat_low = dev_feat_low & VIRTIO_NET_F_MAC;                 // Accept MAC feature
+    feat_high = dev_feat_high & 0;                              // No high features
     // Write back accepted features
     w32(device_features_sel, 0);                                // Select lower 32 bits
     w32(device_features, feat_low);
     w32(device_features_sel, 1);                                // Select higher 32 bits
     w32(device_features, feat_high);
     // Finalize initialization
-    w32(status, *status | (1 << FEATURES_OK));                                   // features OK
+    w32(status, *status | FEATURES_OK);                         // features OK
 
     if(!(*status & FEATURES_OK)) {
         uart_puts("Virtio MMIO negotiation failed.\n");
@@ -183,16 +206,27 @@ int8_t virt_mmio_negotiation(virt_mmio_device_t* device) {
     }
 
     // driver would set up queues and other structures
+    w32(driver_queue_select, 0); // select queue 0 (RX queue)
     w32(driver_queue_desc_low, (uint32_t)(rx_queue->desc) & 0xFFFFFFFF);
     w32(driver_queue_desc_high, (uint32_t)(rx_queue->desc) >> 32);
     w32(driver_avail_low, (uint32_t)(&(rx_queue->avail)) & 0xFFFFFFFF);
     w32(driver_avail_high, (uint32_t)(&(rx_queue->avail)) >> 32);
     w32(driver_used_low, (uint32_t)(&(rx_queue->used)) & 0xFFFFFFFF);
     w32(driver_used_high, (uint32_t)(&(rx_queue->used)) >> 32);
+    w32(driver_queue_size, DESC_QUEUE_SIZE); // set queue size
+
+    w32(driver_queue_select, 1); // select queue 1 (TX queue)
+    w32(driver_queue_desc_low, (uint32_t)(tx_queue->desc) & 0xFFFFFFFF);
+    w32(driver_queue_desc_high, (uint32_t)(tx_queue->desc) >> 32);
+    w32(driver_avail_low, (uint32_t)(&(tx_queue->avail)) & 0xFFFFFFFF);
+    w32(driver_avail_high, (uint32_t)(&(tx_queue->avail)) >> 32);
+    w32(driver_used_low, (uint32_t)(&(tx_queue->used)) & 0xFFFFFFFF);
+    w32(driver_used_high, (uint32_t)(&(tx_queue->used)) >> 32);
+    w32(driver_queue_size, DESC_QUEUE_SIZE); // set queue size
 
     w32(driver_queue_ready, 1); // mark queue as ready
 
-    w32(status, *status | (1 << DRIVER_OK));                                     // driver OK
+    w32(status, *status | DRIVER_OK);                                     // driver OK
 
     uart_puts("Virtio MMIO negotiation completed.\n");
     return 0;

@@ -2,6 +2,7 @@
 #define VIRT_MMIO_H
 
 #include <stdint.h>
+#include <kernel/utils.h>
 
 #define VIRTIO_MAGIC        0x74726976  // "virt" in little-endian
 #define QEMU_VENDOR_ID      0x554D4551  // "QEMU" in little-endian
@@ -42,32 +43,32 @@ VirtIO MMIO Queue register offsets
 /* 
     Virtio MMIO status bits 
 */
-#define ACKNOWLEDGE 1
-#define DRIVER      2
-#define DRIVER_OK   4
-#define FEATURES_OK 8
+#define ACKNOWLEDGE BIT_MASK(1)
+#define DRIVER      BIT_MASK(2)
+#define DRIVER_OK   BIT_MASK(3)
+#define FEATURES_OK BIT_MASK(4)
 /*
     Virtio device feature bits
 */
-#define VIRTIO_F_NOTIFY_ON_EMPTY    0
-#define VIRTIO_F_ANY_LAYOUT         5
-#define VIRTIO_F_RING_INDIRECT_DESC 6
-#define VIRTIO_F_RING_EVENT_IDX     7
-#define VIRTIO_NET_F_MAC            15
-#define VIRTIO_NET_F_GSO            16
-#define VIRTIO_NET_F_GUEST_CSUM     17
-#define VIRTIO_NET_F_CTRL_VQ        18
-#define VIRTIO_NET_F_CTRL_RX        19
-#define VIRTIO_NET_F_CTRL_VLAN      20
-#define VIRTIO_NET_F_CTRL_RX_EXTRA  21
-#define VIRTIO_NET_F_GUEST_TSO4     22
-#define VIRTIO_NET_F_GUEST_TSO6     23
-#define VIRTIO_NET_F_GUEST_ECN      24
-#define VIRTIO_NET_F_GUEST_UFO      25
-#define VIRTIO_NET_F_HOST_TSO4      27
-#define VIRTIO_NET_F_HOST_TSO6      28
-#define VIRTIO_NET_F_HOST_ECN       29
-#define VIRTIO_NET_F_HOST_UFO       30
+#define VIRTIO_F_NOTIFY_ON_EMPTY    BIT_MASK(0)
+#define VIRTIO_F_ANY_LAYOUT         BIT_MASK(5)
+#define VIRTIO_F_RING_INDIRECT_DESC BIT_MASK(6)
+#define VIRTIO_F_RING_EVENT_IDX     BIT_MASK(7)
+#define VIRTIO_NET_F_MAC            BIT_MASK(15)
+#define VIRTIO_NET_F_GSO            BIT_MASK(16)
+#define VIRTIO_NET_F_GUEST_CSUM     BIT_MASK(17)
+#define VIRTIO_NET_F_CTRL_VQ        BIT_MASK(18)
+#define VIRTIO_NET_F_CTRL_RX        BIT_MASK(19)
+#define VIRTIO_NET_F_CTRL_VLAN      BIT_MASK(20)
+#define VIRTIO_NET_F_CTRL_RX_EXTRA  BIT_MASK(21)
+#define VIRTIO_NET_F_GUEST_TSO4     BIT_MASK(22)
+#define VIRTIO_NET_F_GUEST_TSO6     BIT_MASK(23)
+#define VIRTIO_NET_F_GUEST_ECN      BIT_MASK(24)
+#define VIRTIO_NET_F_GUEST_UFO      BIT_MASK(25)
+#define VIRTIO_NET_F_HOST_TSO4      BIT_MASK(27)
+#define VIRTIO_NET_F_HOST_TSO6      BIT_MASK(28)
+#define VIRTIO_NET_F_HOST_ECN       BIT_MASK(29)
+#define VIRTIO_NET_F_HOST_UFO       BIT_MASK(30)
 
 #define DESC_QUEUE_SIZE 256
 #define QUEUE_BUF_SIZE 2048
@@ -75,10 +76,10 @@ VirtIO MMIO Queue register offsets
 /*
     Descriptor flag bits
 */
-// #define VIRTQ_DESC_F_READONLY 0 // device reads from buffer
-#define VIRTQ_DESC_F_NEXT 1     // descriptor continues at next
-#define VIRTQ_DESC_F_WRITE 2    // device writes into this buffer; if not set, device reads from it
-#define VIRTQ_DESC_F_INDIRECT 4 // descriptor points to an array of descriptors (indirect)
+// #define VIRTQ_DESC_F_READONLY BIT_MASK(0)       // device reads from buffer
+#define VIRTQ_DESC_F_NEXT       BIT_MASK(1)     // descriptor continues at next
+#define VIRTQ_DESC_F_WRITE      BIT_MASK(2)     // device writes into this buffer; if not set, device reads from it
+#define VIRTQ_DESC_F_INDIRECT   BIT_MASK(4)     // descriptor points to an array of descriptors (indirect)
 
 typedef struct {
     uint32_t magic;             // always "virt" (0x74726976)
@@ -128,7 +129,7 @@ Used Ring:
         2. Processes any new ring[...] entries.
 */
 struct virtq_used_elem {
-    uint32_t id;  // index of start descriptor
+    uint16_t id;  // index of start descriptor
     uint32_t len; // total bytes written/read (not including virt-io net header)
 };
 

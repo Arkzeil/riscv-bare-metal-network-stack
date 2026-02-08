@@ -5,6 +5,8 @@
 
 #include <stdint.h>
 
+#define BIT_MASK(n) (1U << (n))
+
 char parse(const char c);
 
 int string_len(const char* str);
