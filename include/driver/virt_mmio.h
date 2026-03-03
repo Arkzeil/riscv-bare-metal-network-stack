@@ -9,8 +9,6 @@
 #define VIRTIO_SIZE         0x1000
 #define VIRTIO_SLOTS        8
 
-#define ALIGN_TO_PAGE       (4096 - sizeof(struct virtq_used))
-
 #define GPIO_BASE_ADDR       0x10000000UL
 #define VIRT_MMIO(x)         (GPIO_BASE_ADDR + (x))
 
@@ -34,6 +32,8 @@ VirtIO MMIO Queue register offsets
 #define VIRTIO_MMIO_QUEUE_NUM_MAX       0x034
 #define VIRTIO_MMIO_QUEUE_NUM           0x038
 #define VIRTIO_MMIO_QUEUE_READY         0x044
+#define VIRTIO_MMIO_QUEUE_NOTIFY        0x050
+#define VIRTIO_MMIO_INTERRUPT_STATUS    0x060
 #define VIRTIO_MMIO_QUEUE_DESC_LOW      0x080
 #define VIRTIO_MMIO_QUEUE_DESC_HIGH     0x084
 #define VIRTIO_MMIO_QUEUE_AVAIL_LOW     0x090
@@ -72,6 +72,12 @@ VirtIO MMIO Queue register offsets
 
 #define DESC_QUEUE_SIZE 256
 #define QUEUE_BUF_SIZE 2048
+
+
+// Simplified Legacy Setup
+#define VIRTIO_MMIO_QUEUE_PFN    0x040
+#define VIRTIO_MMIO_QUEUE_ALIGN  0x03c
+#define PAGE_SHIFT               12
 
 /*
     Descriptor flag bits
@@ -116,7 +122,7 @@ struct virtq_avail {
     uint16_t flags;
     uint16_t idx;
     uint16_t ring[DESC_QUEUE_SIZE]; // descriptor indices, must be of size queue_size
-    // uint16_t used_event; // Only if VIRTIO_F_EVENT_IDX
+    uint16_t used_event; // Only if VIRTIO_F_EVENT_IDX
 };
 
 /*
@@ -129,7 +135,7 @@ Used Ring:
         2. Processes any new ring[...] entries.
 */
 struct virtq_used_elem {
-    uint16_t id;  // index of start descriptor
+    uint32_t id;  // index of start descriptor
     uint32_t len; // total bytes written/read (not including virt-io net header)
 };
 
@@ -137,15 +143,15 @@ struct virtq_used {
     uint16_t flags;
     uint16_t idx;
     struct virtq_used_elem ring[DESC_QUEUE_SIZE];
-    // uint16_t avail_event;   // optional
+    uint16_t avail_event;   // optional
 };
 
 // virtio queue
 struct virtq {
     struct virtq_desc desc[DESC_QUEUE_SIZE];        // 16 bytes each
     struct virtq_avail avail;                       // 2 bytes + (2 * 256) + 2
+    uint8_t pad[4096 - sizeof(struct virtq_avail)];
     struct virtq_used used;                         // 4 bytes + (8 * 256) + 2
-    uint8_t padding[ALIGN_TO_PAGE];                 // pad to multiple of page size
 };
 
 // Negotiated VIRTIO_NET_F_MAC, the device sets a stable MAC here
@@ -180,6 +186,7 @@ struct virtio_net_hdr {
     uint16_t num_buffers;       // maybe absent in some legacy setups
 };
 
+void virt_mmio_net_poll_rx(virt_mmio_device_t* device, uint8_t* buffer, uint32_t length);
 int8_t virt_mmio_net_virtq_init(virt_mmio_device_t* device);
 
 void virt_print_device_info(virt_mmio_device_t* device);

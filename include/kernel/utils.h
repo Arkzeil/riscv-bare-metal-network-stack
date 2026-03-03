@@ -7,6 +7,8 @@
 
 #define BIT_MASK(n) (1U << (n))
 
+#define mem_barrier() __asm__ __volatile__("fence iorw, iorw" ::: "memory")
+
 char parse(const char c);
 
 int string_len(const char* str);

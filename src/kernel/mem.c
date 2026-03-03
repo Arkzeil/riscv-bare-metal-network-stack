@@ -18,15 +18,34 @@ static uint8_t *allocated = (uint8_t*)&__heap_start;
 static uint32_t allocated_pages __attribute__((unused)) = 0;
 
 void *mem_alloc(uint32_t size) {
-    size = (size + 7) & ~7; // 8-byte align
+    // Default to 8-byte alignment
+    uint32_t alignment = 8;
 
-    if(allocated + size > __heap_end)
+    // A basic heuristic to request page alignment for larger allocations,
+    // which are likely for DMA buffers or page-sized structures.
+    if (size >= 4096) {
+        alignment = 4096;
+    }
+
+    // Ensure alignment is a power of two
+    if ((alignment & (alignment - 1)) != 0) {
+        // Alignment is not a power of two, cannot proceed
+        return NULL;
+    }
+
+    uintptr_t current_ptr = (uintptr_t)allocated;
+    // Calculate the next aligned address
+    uintptr_t aligned_ptr = (current_ptr + alignment - 1) & ~(alignment - 1);
+    
+    uintptr_t new_allocated_ptr = aligned_ptr + size;
+
+    if ((uint8_t*)new_allocated_ptr > __heap_end) {
         return NULL; // Out of memory
+    }
 
-    uint8_t* mem = allocated;
-    allocated += size;
+    allocated = (uint8_t*)new_allocated_ptr;
 
-    return mem;
+    return (void*)aligned_ptr;
 }
 
 void *mem_alloc_page() {
