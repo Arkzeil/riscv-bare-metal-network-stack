@@ -111,3 +111,9 @@ void w32(uint32_t *addr, uint32_t val){
 uint32_t r32(uint32_t *addr){
     return *((volatile uint32_t*)addr);
 }
+
+void wait_cycles(uint32_t cycles) {
+    for (uint32_t i = 0; i < cycles; i++) {
+        asm volatile("nop");
+    }
+}

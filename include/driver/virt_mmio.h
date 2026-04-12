@@ -16,6 +16,11 @@
 #define VIRT_MMIO_NET_HDR    VIRT_MMIO(0x1000)
 #define VIRT_MMIO_BLOCK_HDR  VIRT_MMIO(0x2000)
 
+// Bit 32 is in the "High" feature register (Select = 1)
+#define VIRTIO_F_VERSION_1    BIT_MASK(0) // Bit 0 of High = Bit 32 total
+#define VIRTIO_F_RING_PACKED  BIT_MASK(2)
+#define VIRTIO_F_NOTIFICATION_DATA BIT_MASK(6)
+
 /* 
 VirtIO MMIO register offsets 
 */
@@ -23,7 +28,8 @@ VirtIO MMIO register offsets
 #define VIRTIO_MMIO_DEVICE_FEATURES     0x010 
 #define VIRTIO_MMIO_DEVICE_FEATURES_SEL 0x014 
 #define VIRTIO_MMIO_DRIVER_FEATURES     0x020 
-#define VIRTIO_MMIO_DRIVER_FEATURES_SEL 0x024 
+#define VIRTIO_MMIO_DRIVER_FEATURES_SEL 0x024
+#define VIRTIO_MMIO_GUEST_PAGE_SIZE     0x028
 #define VIRTIO_MMIO_CONFIG              0x100
 /*
 VirtIO MMIO Queue register offsets
@@ -31,6 +37,7 @@ VirtIO MMIO Queue register offsets
 #define VIRTIO_MMIO_QUEUE_SEL           0x030
 #define VIRTIO_MMIO_QUEUE_NUM_MAX       0x034
 #define VIRTIO_MMIO_QUEUE_NUM           0x038
+#define VIRTIO_MMIO_QUEUE_PFN           0x040
 #define VIRTIO_MMIO_QUEUE_READY         0x044
 #define VIRTIO_MMIO_QUEUE_NOTIFY        0x050
 #define VIRTIO_MMIO_INTERRUPT_STATUS    0x060
@@ -43,10 +50,12 @@ VirtIO MMIO Queue register offsets
 /* 
     Virtio MMIO status bits 
 */
-#define ACKNOWLEDGE BIT_MASK(1)
-#define DRIVER      BIT_MASK(2)
-#define DRIVER_OK   BIT_MASK(3)
-#define FEATURES_OK BIT_MASK(4)
+#define ACKNOWLEDGE         BIT_MASK(0)
+#define DRIVER              BIT_MASK(1)
+#define DRIVER_OK           BIT_MASK(2)
+#define FEATURES_OK         BIT_MASK(3)
+#define DEVICE_NEEDS_RESET  BIT_MASK(6)
+#define FAILED              BIT_MASK(7)
 /*
     Virtio device feature bits
 */
@@ -83,34 +92,73 @@ VirtIO MMIO Queue register offsets
     Descriptor flag bits
 */
 // #define VIRTQ_DESC_F_READONLY BIT_MASK(0)       // device reads from buffer
-#define VIRTQ_DESC_F_NEXT       BIT_MASK(1)     // descriptor continues at next
-#define VIRTQ_DESC_F_WRITE      BIT_MASK(2)     // device writes into this buffer; if not set, device reads from it
-#define VIRTQ_DESC_F_INDIRECT   BIT_MASK(4)     // descriptor points to an array of descriptors (indirect)
+#define VIRTQ_DESC_F_NEXT       BIT_MASK(0)     // descriptor continues at next
+#define VIRTQ_DESC_F_WRITE      BIT_MASK(1)     // device writes into this buffer; if not set, device reads from it
+#define VIRTQ_DESC_F_INDIRECT   BIT_MASK(3)     // descriptor points to an array of descriptors (indirect)
+#define VIRTQ_DESC_F_AVAIL      BIT_MASK(7)     // if the same as device's wrapper counter, it's available to device
+#define VIRTQ_DESC_F_USED       BIT_MASK(15)    // should be the opposite of wrapper counter, 
+                                                // would become same as device's wrapper counter when device is done with it
+
 
 typedef struct {
     uint32_t magic;             // always "virt" (0x74726976)
     uint32_t version;           // 1: VirtIO‑MMIO (legacy), 2: VirtIO‑PCI (modern)
     uint32_t device_id;         // 1: network, 2: block, 3: console, etc.
     uint32_t vendor_id;         // 0x554D4551 (“QEMU”)
-    uint32_t host_features;
-    uint32_t guest_features;
-    uint32_t page_size;
-    uint32_t num_queues;
-    uint32_t queue_size;
+    uint32_t host_features;     // device features (bitmask)
+    uint32_t device_features_sel;
+    uint32_t guest_features;    // driver features (bitmask)
+    uint32_t guest_features_sel;
+    uint32_t queue_sel;
+    uint32_t queue_num_max;
+    uint32_t queue_num;
+    uint32_t queue_ready;
+    uint32_t queue_notify;
+    uint32_t interrupt_status;
+    uint32_t interrupt_ack;
+    uint32_t status;
+    uint32_t queue_desc_low;
+    uint32_t queue_desc_high;
+    uint32_t queue_driver_low;
+    uint32_t queue_driver_high;
+    uint32_t queue_device_low;
+    uint32_t queue_device_high;
     uint32_t config_generation;
     // Device-specific configuration space follows
 } virt_mmio_device_t;
+
+typedef struct {
+    uint32_t magic;             // always "virt" (0x74726976)
+    uint32_t version;           // 1: VirtIO‑MMIO (legacy), 2: VirtIO‑PCI (modern)
+    uint32_t device_id;         // 1: network, 2: block, 3: console, etc.
+    uint32_t vendor_id;         // 0x554D4551 (“QEMU”)
+    uint32_t host_features;     // device features (bitmask)
+    uint32_t host_features_sel;
+    uint32_t guest_features;    // driver features (bitmask)
+    uint32_t guest_features_sel;
+    uint32_t guest_page_size;
+    uint32_t queue_sel;
+    uint32_t queue_num_max;
+    uint32_t queue_num;
+    uint32_t queue_align;
+    uint32_t queue_pfn; 
+    uint32_t queue_notify;
+    uint32_t interrupt_status;
+    uint32_t interrupt_ack;
+    uint32_t status;
+    // Device-specific configuration space follows
+} virt_mmio_device_legacy;
 
 // Virtio MMIO queue structure: each descpriptor describes a buffer
 struct virtq_desc {
     uint64_t addr;      // Address of buffer (guest-physical)
     uint32_t len;       // Length
+    uint16_t id;        // buffer id
     uint16_t flags;     // bits set with VIRTQ_DESC_F_* 
-    uint16_t next;      // We chain unused descriptors via this field
 };
 
 /*
-Avail Ring:
+Avail Ring: buffer used by device provided by driver
     + Driver:
         1. Writes descriptor index into ring[...]
         2. Increments idx
@@ -119,14 +167,13 @@ Avail Ring:
         2. Consumes new entries
 */
 struct virtq_avail {
-    uint16_t flags;
-    uint16_t idx;
+    uint16_t flags;                 // can only be written by driver, device can only read
+    uint16_t idx;                   // can only be written by driver, device can only read
     uint16_t ring[DESC_QUEUE_SIZE]; // descriptor indices, must be of size queue_size
-    uint16_t used_event; // Only if VIRTIO_F_EVENT_IDX
 };
 
 /*
-Used Ring:
+Used Ring: buffer used by device to return used buffers to driver
     + Device:
         1. Writes entries here.
         2. Increments idx.
@@ -143,14 +190,12 @@ struct virtq_used {
     uint16_t flags;
     uint16_t idx;
     struct virtq_used_elem ring[DESC_QUEUE_SIZE];
-    uint16_t avail_event;   // optional
 };
 
 // virtio queue
 struct virtq {
     struct virtq_desc desc[DESC_QUEUE_SIZE];        // 16 bytes each
     struct virtq_avail avail;                       // 2 bytes + (2 * 256) + 2
-    uint8_t pad[4096 - sizeof(struct virtq_avail)];
     struct virtq_used used;                         // 4 bytes + (8 * 256) + 2
 };
 

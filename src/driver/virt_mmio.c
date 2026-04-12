@@ -7,6 +7,68 @@ static struct virtq *rx_queue;
 static struct virtq *tx_queue;
 static volatile uint32_t rx_last_used_idx = 0;
 
+static uint8_t avail_wrap_count = 1;
+
+#define ETH_P_IP   0x0800
+#define ETH_P_ARP  0x0806
+#define ETH_P_IPV6 0x86DD
+
+struct eth_hdr {
+    uint8_t dst[6];
+    uint8_t src[6];
+    uint16_t type;
+} __attribute__((packed));
+
+struct ipv4_hdr {
+    uint8_t  version_ihl;
+    uint8_t  tos;
+    uint16_t len;
+    uint16_t id;
+    uint16_t off;
+    uint8_t  ttl;
+    uint8_t  proto;
+    uint16_t sum;
+    uint32_t src;
+    uint32_t dst;
+} __attribute__((packed));
+
+static inline uint16_t ntohs(uint16_t n) {
+    return (uint16_t)((n << 8) | (n >> 8));
+}
+
+static inline uint32_t ntohl(uint32_t n) {
+    return BE2LE(n);
+}
+
+static void print_mac(uint8_t *mac) {
+    for(int i = 0; i < 6; i++) {
+        uint8_t b = mac[i];
+        uint8_t h = (b >> 4) & 0xF;
+        uint8_t l = b & 0xF;
+        uart_putc(h > 9 ? h + 'A' - 10 : h + '0');
+        uart_putc(l > 9 ? l + 'A' - 10 : l + '0');
+        if(i < 5) uart_putc(':');
+    }
+}
+
+static void print_ip(uint32_t ip) {
+    uint8_t *b = (uint8_t *)&ip;
+    for(int i = 0; i < 4; i++) {
+        uint8_t val = b[i];
+        if (val >= 100) {
+            uart_putc(val / 100 + '0');
+            uart_putc((val / 10) % 10 + '0');
+            uart_putc(val % 10 + '0');
+        } else if (val >= 10) {
+            uart_putc(val / 10 + '0');
+            uart_putc(val % 10 + '0');
+        } else {
+            uart_putc(val + '0');
+        }
+        if(i < 3) uart_putc('.');
+    }
+}
+
 // should only trust the values in the config space after 
 // we have set the DRIVER_OK (4) bit in the Status register
 static void virt_mmio_read_config(virt_mmio_device_t* device, uint32_t offset, void* buf, uint32_t len) {
@@ -20,12 +82,18 @@ int8_t virt_mmio_net_virtq_init(virt_mmio_device_t* device) {
     
     // Setup RX queues
     rx_queue = mem_alloc(sizeof(struct virtq));
+    uart_puts("Allocated memory for RX queue at: ");
+    uart_b2x((uint32_t)(uintptr_t)rx_queue);
+    uart_putc('\n');
     if(rx_queue == NULL) {
         uart_puts("Failed to allocate memory for RX queue.\n");
         return -1;
     }
     // Setup TX queues
     tx_queue = mem_alloc(sizeof(struct virtq));
+    uart_puts("Allocated memory for TX queue at: ");
+    uart_b2x((uint32_t)(uintptr_t)tx_queue);
+    uart_putc('\n');
     if(tx_queue == NULL) {
         uart_puts("Failed to allocate memory for TX queue.\n");
         return -1;
@@ -40,14 +108,26 @@ int8_t virt_mmio_net_virtq_init(virt_mmio_device_t* device) {
     for(uint32_t i = 0; i < DESC_QUEUE_SIZE; i++) {
         rx_queue->desc[i].addr = (uint64_t)queue_buf + (i * QUEUE_BUF_SIZE);
         rx_queue->desc[i].len = QUEUE_BUF_SIZE; // Example buffer length
+        rx_queue->desc[i].id = 0; // Set buffer id to index
         rx_queue->desc[i].flags = VIRTQ_DESC_F_WRITE; // Buffers must be device‑writable
-        rx_queue->desc[i].next = 0; // No next descriptor
         rx_queue->avail.ring[i] = i; // Initialize available ring
+        if (avail_wrap_count) {
+            rx_queue->desc[i].flags |= VIRTQ_DESC_F_AVAIL; // Mark as available to device
+            rx_queue->desc[i].flags &= ~VIRTQ_DESC_F_USED; // Mark as not used by device
+        }
+        else {
+            rx_queue->desc[i].flags |= VIRTQ_DESC_F_USED; // Mark as not available to device
+            rx_queue->desc[i].flags &= ~VIRTQ_DESC_F_AVAIL; // Mark as not available to device
+        }
+
+        if(i != DESC_QUEUE_SIZE - 1) {
+            rx_queue->desc[i].flags |= VIRTQ_DESC_F_NEXT; // Chain descriptors
+        }
 
         tx_queue->desc[i].addr = 0;
         tx_queue->desc[i].len = QUEUE_BUF_SIZE; // Example buffer length
+        tx_queue->desc[i].id = i; // Set buffer id to index
         tx_queue->desc[i].flags = 0; // TX descriptors are device‑read‑only
-        tx_queue->desc[i].next = 0; // No next descriptor
         tx_queue->avail.ring[i] = i; // Initialize available ring
     }
 
@@ -90,19 +170,29 @@ void virt_mmio_net_poll_rx(virt_mmio_device_t* device, uint8_t* buffer, uint32_t
     uart_puts("Polling for received data via Virtio Network Device...\n");
 
     // Populate available ring with all RX descriptors and notify device
-    mem_barrier();
-    for(uint32_t i = 0; i < DESC_QUEUE_SIZE; i++) {
-        rx_queue->avail.ring[rx_queue->avail.idx % DESC_QUEUE_SIZE] = i;
-        rx_queue->avail.idx++;
-    }
-    mem_barrier();
-    // Notify device that RX descriptors are available (queue 0 = RX)
-    w32((uint32_t*)((uintptr_t)device + VIRTIO_MMIO_QUEUE_NOTIFY), 0);
+    // mem_barrier();
+    // for(uint32_t i = 0; i < DESC_QUEUE_SIZE; i++) {
+    //     rx_queue->avail.ring[rx_queue->avail.idx % DESC_QUEUE_SIZE] = i;
+    //     rx_queue->avail.idx++;
+    // }
+    // mem_barrier();
+    // // Notify device that RX descriptors are available (queue 0 = RX)
+    // w32((uint32_t*)((uintptr_t)device + VIRTIO_MMIO_QUEUE_NOTIFY), 0);
 
     while(1) {
         mem_barrier();
-        // Check if device has completed any descriptors (used.idx changed)
+        if(device->interrupt_status & 0x1) { // Check if interrupt is for RX
+            uart_puts("Received interrupt for RX queue.\n");
+            // w32((uint32_t*)((uintptr_t)device + VIRTIO_MMIO_INTERRUPT_ACK), 0x1); // Acknowledge RX interrupt
+        }
+        if(rx_queue->desc[0].flags & VIRTQ_DESC_F_USED) {
+            uart_puts("Device marked descriptor 0 as used.\n");
+        }
         if(rx_last_used_idx != rx_queue->used.idx) {
+            uart_puts("Device updated used index to: ");
+            uart_b2x(rx_queue->used.idx);
+            uart_putc('\n');
+
             struct virtq_used_elem* used_elem = &(rx_queue->used.ring[rx_last_used_idx % DESC_QUEUE_SIZE]);
             uint32_t desc_index = used_elem->id;
             uint32_t len = used_elem->len;
@@ -114,8 +204,30 @@ void virt_mmio_net_poll_rx(virt_mmio_device_t* device, uint8_t* buffer, uint32_t
 
             uint8_t *frame = buf_addr + sizeof(struct virtio_net_hdr);
             uint32_t frame_len = len - sizeof(struct virtio_net_hdr);
-            // parse packet here if needed (e.g., skip virtio net header)
-            // parse_virtio_net_frame(frame, frame_len);
+            
+            struct eth_hdr *eth = (struct eth_hdr *)frame;
+            uint16_t eth_type = ntohs(eth->type);
+
+            uart_puts("Received Frame [");
+            print_mac(eth->src);
+            uart_puts(" -> ");
+            print_mac(eth->dst);
+            uart_puts("] type=0x");
+            uart_b2x(eth_type);
+            uart_putc('\n');
+
+            if (eth_type == ETH_P_IP) {
+                struct ipv4_hdr *ip = (struct ipv4_hdr *)(frame + sizeof(struct eth_hdr));
+                uart_puts("  IPv4: ");
+                print_ip(ip->src);
+                uart_puts(" -> ");
+                print_ip(ip->dst);
+                uart_puts(" proto=");
+                uart_b2x(ip->proto);
+                uart_putc('\n');
+            } else if (eth_type == ETH_P_ARP) {
+                uart_puts("  ARP Packet detected\n");
+            }
 
             // Recycle descriptor back to available ring
             rx_queue->avail.ring[rx_queue->avail.idx % DESC_QUEUE_SIZE] = desc_index;
@@ -128,8 +240,11 @@ void virt_mmio_net_poll_rx(virt_mmio_device_t* device, uint8_t* buffer, uint32_t
             uart_puts("Received data length: ");
             uart_b2x(frame_len);
             uart_putc('\n');
+            goto exit;
         }
     }
+exit:
+    uart_puts("Finished polling for received data.\n");
 }
 
 
@@ -147,23 +262,29 @@ void virt_print_device_info(virt_mmio_device_t* device) {
     uart_puts("Vendor ID: ");
     uart_b2x(device->vendor_id);
     uart_putc('\n');
-    uart_puts("Host Features: ");
+    uart_puts("Queue Max Size: ");
+    uart_b2x(device->queue_num_max);
+    uart_putc('\n');
+    uart_puts("Host feature sel: ");
+    uart_b2x(device->device_features_sel);
+    uart_putc('\n');
+    uart_puts("Host Features Low: ");
     uart_b2x(device->host_features);
     uart_putc('\n');
-    uart_puts("Guest Features: ");
+    uart_puts("Guest Features Low: ");
     uart_b2x(device->guest_features);
     uart_putc('\n');
-    uart_puts("Page Size: ");
-    uart_b2x(device->page_size);
+    w32((uint32_t *)device + VIRTIO_MMIO_DEVICE_FEATURES_SEL / 4, 1); // Select higher 32 bits
+    mem_barrier();
+    wait_cycles(1000); // Ensure the device has time to update the features
+    uart_puts("Host feature sel: ");
+    uart_b2x(device->device_features_sel);
     uart_putc('\n');
-    uart_puts("Number of Queues: ");
-    uart_b2x(device->num_queues);
+    uart_puts("Host Features High: ");
+    uart_b2x(device->host_features);
     uart_putc('\n');
-    uart_puts("Queue Size: ");
-    uart_b2x(device->queue_size);
-    uart_putc('\n');
-    uart_puts("Config Generation: ");
-    uart_b2x(device->config_generation);
+    uart_puts("Guest Features High: ");
+    uart_b2x(device->guest_features);
     uart_putc('\n');
 }
 
@@ -183,6 +304,7 @@ void virt_find_all_devices(void) {
             case 1:
                 uart_puts("Found Virtio Network Device.\n");
                 virt_print_device_info(device);
+                w32((uint32_t *)((uintptr_t)device) + (VIRTIO_MMIO_STATUS / 4), 0x0);  // Reset device
                 virt_mmio_net_virtq_init(device);
                 virt_mmio_negotiation(device);
 
@@ -224,7 +346,6 @@ int8_t virt_mmio_negotiation(virt_mmio_device_t* device) {
     uint32_t *driver_queue_select = mmio + (VIRTIO_MMIO_QUEUE_SEL / 4);             // Queue select offset
     uint32_t *driver_queue_ready = mmio + (VIRTIO_MMIO_QUEUE_READY / 4);            // Queue ready offset
 
-    w32(status, 0x0);                                           // Reset device
     w32(status, ACKNOWLEDGE);                                   // Acknowledge
     w32(status, ACKNOWLEDGE | DRIVER);                          // Driver
     // Read Features
@@ -234,7 +355,8 @@ int8_t virt_mmio_negotiation(virt_mmio_device_t* device) {
     uint32_t dev_feat_high = r32(device_features);
     // choose features ()
     feat_low = dev_feat_low & VIRTIO_NET_F_MAC;                 // Accept MAC feature
-    feat_high = dev_feat_high & 0;                              // No high features
+    feat_high = dev_feat_high & (uint32_t)VIRTIO_F_VERSION_1;   // Accept version 1 feature
+    feat_high |= VIRTIO_F_RING_PACKED; // Accept packed ring feature
     // Write back accepted features
     w32(driver_features_sel, 0);                                // Select lower 32 bits
     w32(driver_features, feat_low);
@@ -242,6 +364,10 @@ int8_t virt_mmio_negotiation(virt_mmio_device_t* device) {
     w32(driver_features, feat_high);
     // Finalize initialization
     w32(status, *status | FEATURES_OK);                         // features OK
+
+    for(int i = 0; i < 1000000; i++){
+        asm volatile("nop");
+    } // Simple delay loop to allow device to process features
 
     if(!(*status & FEATURES_OK)) {
         uart_puts("Virtio MMIO negotiation failed.\n");
@@ -252,6 +378,8 @@ int8_t virt_mmio_negotiation(virt_mmio_device_t* device) {
 
     // driver would set up queues and other structures
     w32(driver_queue_select, 0); // select queue 0 (RX queue)
+    uart_b2x(r32(&(device->queue_ready)));
+    
     uint64_t desc_addr = (uint64_t)rx_queue->desc;
     w32(driver_queue_desc_low, desc_addr & 0xFFFFFFFF);
     w32(driver_queue_desc_high, desc_addr >> 32);

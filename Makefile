@@ -54,7 +54,8 @@ net:
 	qemu-system-riscv64 -machine virt -display none -bios none \
 	-kernel build/$(KERNEL).elf -serial stdio \
 	-netdev user,id=net0,hostfwd=udp::5555-:5555 \
-	-device virtio-net-device,netdev=net0
+	-device virtio-net-device,packed=on,netdev=net0 \
+	-global virtio-mmio.force-legacy=false
 
 debug:
 	qemu-system-$(ARCH) -machine virt -display none -bios none \

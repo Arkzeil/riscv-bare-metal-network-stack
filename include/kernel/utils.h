@@ -30,4 +30,6 @@ uint32_t BE2LE(uint32_t BE);
 void w32(uint32_t *addr, uint32_t val);
 uint32_t r32(uint32_t *addr);
 
+void wait_cycles(uint32_t cycles);
+
 #endif
