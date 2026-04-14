@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <kernel/utils.h>
 
+#define QEMU_NIC 1
+
 #define VIRTIO_MAGIC        0x74726976  // "virt" in little-endian
 #define QEMU_VENDOR_ID      0x554D4551  // "QEMU" in little-endian
 #define VIRTIO_SIZE         0x1000
@@ -170,6 +172,7 @@ struct virtq_avail {
     uint16_t flags;                 // can only be written by driver, device can only read
     uint16_t idx;                   // can only be written by driver, device can only read
     uint16_t ring[DESC_QUEUE_SIZE]; // descriptor indices, must be of size queue_size
+    // uint16_t used_event;            // only if VIRTIO_F_RING_EVENT_IDX, otherwise driver can ignore
 };
 
 /*
@@ -232,6 +235,7 @@ struct virtio_net_hdr {
 };
 
 void virt_mmio_net_poll_rx(virt_mmio_device_t* device, uint8_t* buffer, uint32_t length);
+int8_t virt_mmio_net_tx(virt_mmio_device_t* device, const uint8_t* data, uint32_t length);
 int8_t virt_mmio_net_virtq_init(virt_mmio_device_t* device);
 
 void virt_print_device_info(virt_mmio_device_t* device);

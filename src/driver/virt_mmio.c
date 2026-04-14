@@ -6,12 +6,20 @@
 static struct virtq *rx_queue;
 static struct virtq *tx_queue;
 static volatile uint32_t rx_last_used_idx = 0;
+static volatile uint32_t rx_last_avail_idx = 0;
+static volatile uint32_t tx_last_used_idx = 0;
+static volatile uint32_t tx_last_avail_idx = 0;
 
 static uint8_t avail_wrap_count = 1;
+static uint8_t used_wrap_count = 1;
 
 #define ETH_P_IP   0x0800
 #define ETH_P_ARP  0x0806
 #define ETH_P_IPV6 0x86DD
+
+#ifdef QEMU_NIC
+uint8_t my_ip[4] = {10, 0, 2, 15};
+#endif
 
 struct eth_hdr {
     uint8_t dst[6];
@@ -30,6 +38,18 @@ struct ipv4_hdr {
     uint16_t sum;
     uint32_t src;
     uint32_t dst;
+} __attribute__((packed));
+
+struct arp_hdr {
+    uint16_t htype;
+    uint16_t ptype;
+    uint8_t  hlen;
+    uint8_t  plen;
+    uint16_t oper;
+    uint8_t  sha[6];
+    uint32_t spa;
+    uint8_t  tha[6];
+    uint32_t tpa;
 } __attribute__((packed));
 
 static inline uint16_t ntohs(uint16_t n) {
@@ -69,6 +89,61 @@ static void print_ip(uint32_t ip) {
     }
 }
 
+static void parse_arp(struct arp_hdr *arp) {
+    uart_puts("  ARP: ");
+    if (ntohs(arp->oper) == 1) {
+        uart_puts("Request for ");
+        print_ip(arp->tpa);
+        uart_puts(" from ");
+        print_ip(arp->spa);
+        uart_putc('\n');
+    } else if (ntohs(arp->oper) == 2) {
+        uart_puts("Reply from ");
+        print_ip(arp->spa);
+        uart_puts(" to ");
+        print_ip(arp->tpa);
+        uart_putc('\n');
+    } else {
+        uart_puts("Unknown ARP operation: ");
+        uart_b2x(ntohs(arp->oper));
+        uart_putc('\n');
+    }
+}
+
+static void build_virtio_net_hdr(struct virtio_net_hdr *hdr, uint16_t flags, uint16_t gso_type, uint16_t hdr_len, uint16_t gso_size, uint16_t csum_start, uint16_t csum_offset) {
+    hdr->flags = flags;
+    hdr->gso_type = gso_type;
+    hdr->hdr_len = hdr_len;
+    hdr->gso_size = gso_size;
+    hdr->csum_start = csum_start;
+    hdr->csum_offset = csum_offset;
+}
+
+static void build_eth_frame(uint8_t *buffer, uint8_t *dst_mac, uint8_t *src_mac, uint16_t eth_type, const uint8_t *payload, uint16_t payload_len) {
+    struct eth_hdr *eth = (struct eth_hdr *)buffer;
+    for(int i = 0; i < 6; i++) {
+        eth->dst[i] = dst_mac[i];
+        eth->src[i] = src_mac[i];
+    }
+    eth->type = ntohs(eth_type);
+    mem_copy(buffer + sizeof(struct eth_hdr), payload, payload_len);
+}
+
+static void build_arp_response(uint8_t *buffer, uint8_t *src_mac, uint32_t src_ip, uint8_t *dst_mac, uint32_t dst_ip) {
+    struct arp_hdr *arp = (struct arp_hdr *)buffer;
+    arp->htype = ntohs(1); // Ethernet
+    arp->ptype = ntohs(ETH_P_IP);
+    arp->hlen = 6;
+    arp->plen = 4;
+    arp->oper = ntohs(2); // ARP Reply
+    for(int i = 0; i < 6; i++) {
+        arp->sha[i] = src_mac[i];
+        arp->tha[i] = dst_mac[i];
+    }
+    arp->spa = src_ip;
+    arp->tpa = dst_ip;
+}
+
 // should only trust the values in the config space after 
 // we have set the DRIVER_OK (4) bit in the Status register
 static void virt_mmio_read_config(virt_mmio_device_t* device, uint32_t offset, void* buf, uint32_t len) {
@@ -99,18 +174,27 @@ int8_t virt_mmio_net_virtq_init(virt_mmio_device_t* device) {
         return -1;
     }
 
-    uint8_t *queue_buf = mem_alloc(QUEUE_BUF_SIZE * DESC_QUEUE_SIZE); // Example buffer allocation
-    if(queue_buf == NULL) {
-        uart_puts("Failed to allocate memory for RX buffers.\n");
+    uint8_t *rx_queue_buf = mem_alloc(QUEUE_BUF_SIZE * DESC_QUEUE_SIZE); // Example buffer allocation
+    uint8_t *tx_queue_buf = mem_alloc(QUEUE_BUF_SIZE * DESC_QUEUE_SIZE); // Example buffer allocation for TX
+    if(rx_queue_buf == NULL || tx_queue_buf == NULL) {
+        uart_puts("Failed to allocate memory for RX or TX buffers.\n");
         return -1;
     }
 
     for(uint32_t i = 0; i < DESC_QUEUE_SIZE; i++) {
-        rx_queue->desc[i].addr = (uint64_t)queue_buf + (i * QUEUE_BUF_SIZE);
+        rx_queue->desc[i].addr = (uint64_t)rx_queue_buf + (i * QUEUE_BUF_SIZE);
         rx_queue->desc[i].len = QUEUE_BUF_SIZE; // Example buffer length
         rx_queue->desc[i].id = 0; // Set buffer id to index
         rx_queue->desc[i].flags = VIRTQ_DESC_F_WRITE; // Buffers must be device‑writable
         rx_queue->avail.ring[i] = i; // Initialize available ring
+        rx_queue->avail.idx++;
+        
+        tx_queue->desc[i].addr = (uint64_t)tx_queue_buf + (i * QUEUE_BUF_SIZE);
+        tx_queue->desc[i].len = QUEUE_BUF_SIZE; // Example buffer length
+        tx_queue->desc[i].id = 0; // Set buffer id to index
+        tx_queue->desc[i].flags = 0; // TX descriptors are device‑read‑only
+        tx_queue->avail.ring[i] = i; // Initialize available ring
+
         if (avail_wrap_count) {
             rx_queue->desc[i].flags |= VIRTQ_DESC_F_AVAIL; // Mark as available to device
             rx_queue->desc[i].flags &= ~VIRTQ_DESC_F_USED; // Mark as not used by device
@@ -124,11 +208,14 @@ int8_t virt_mmio_net_virtq_init(virt_mmio_device_t* device) {
             rx_queue->desc[i].flags |= VIRTQ_DESC_F_NEXT; // Chain descriptors
         }
 
-        tx_queue->desc[i].addr = 0;
-        tx_queue->desc[i].len = QUEUE_BUF_SIZE; // Example buffer length
-        tx_queue->desc[i].id = i; // Set buffer id to index
-        tx_queue->desc[i].flags = 0; // TX descriptors are device‑read‑only
-        tx_queue->avail.ring[i] = i; // Initialize available ring
+        if (used_wrap_count) {
+            tx_queue->desc[i].flags |= VIRTQ_DESC_F_USED;
+            tx_queue->desc[i].flags |= VIRTQ_DESC_F_AVAIL;
+        }
+        else {
+            tx_queue->desc[i].flags &= ~VIRTQ_DESC_F_USED;
+            tx_queue->desc[i].flags &= ~VIRTQ_DESC_F_AVAIL;
+        }
     }
 
     rx_queue->avail.idx = 0;  // Start with 0 available descriptors
@@ -154,16 +241,19 @@ void virt_mmio_net_get_mac_address(virt_mmio_device_t* device, uint8_t* mac_buf)
     uart_putc('\n');
 }
 
-void virt_mmio_net_send(const uint8_t* data, uint32_t length) {
+void virt_mmio_net_send(virt_mmio_device_t* device, const uint8_t* data, uint32_t length) {
     uart_puts("Sending data via Virtio Network Device...\n");
 
     // Find the next available descriptor
     uint16_t desc_index = tx_queue->avail.ring[tx_queue->avail.idx % DESC_QUEUE_SIZE];
     // Copy data to the descriptor buffer
     mem_copy((void*)(uintptr_t)tx_queue->desc[desc_index].addr, data, length);
+    tx_queue->desc[desc_index].flags &= ~VIRTQ_DESC_F_AVAIL; // Mark descriptor as not used by device
     tx_queue->desc[desc_index].len = length;
     // Update available ring (available to device to consume)
     tx_queue->avail.idx++;
+
+    w32((uint32_t*)((uintptr_t)device + VIRTIO_MMIO_QUEUE_NOTIFY), 1);
 }
 
 void virt_mmio_net_poll_rx(virt_mmio_device_t* device, uint8_t* buffer, uint32_t length) {
@@ -181,10 +271,10 @@ void virt_mmio_net_poll_rx(virt_mmio_device_t* device, uint8_t* buffer, uint32_t
 
     while(1) {
         mem_barrier();
-        if(device->interrupt_status & 0x1) { // Check if interrupt is for RX
-            uart_puts("Received interrupt for RX queue.\n");
+        // if(device->interrupt_status & 0x1) { // Check if interrupt is for RX
+        //     uart_puts("Received interrupt for RX queue.\n");
             // w32((uint32_t*)((uintptr_t)device + VIRTIO_MMIO_INTERRUPT_ACK), 0x1); // Acknowledge RX interrupt
-        }
+        // }
         if(rx_queue->desc[0].flags & VIRTQ_DESC_F_USED) {
             uart_puts("Device marked descriptor 0 as used.\n");
         }
@@ -227,6 +317,7 @@ void virt_mmio_net_poll_rx(virt_mmio_device_t* device, uint8_t* buffer, uint32_t
                 uart_putc('\n');
             } else if (eth_type == ETH_P_ARP) {
                 uart_puts("  ARP Packet detected\n");
+                parse_arp((struct arp_hdr *)(frame + sizeof(struct eth_hdr)));
             }
 
             // Recycle descriptor back to available ring
@@ -245,6 +336,36 @@ void virt_mmio_net_poll_rx(virt_mmio_device_t* device, uint8_t* buffer, uint32_t
     }
 exit:
     uart_puts("Finished polling for received data.\n");
+}
+
+int8_t virt_mmio_net_tx(virt_mmio_device_t* device, const uint8_t* data, uint32_t length) {
+    uint8_t *packet = mem_alloc(length + sizeof(struct arp_hdr) + sizeof(struct eth_hdr) + sizeof(struct virtio_net_hdr));
+    uint8_t *p = packet;
+    if(packet == NULL) {
+        uart_puts("Failed to allocate memory for TX packet.\n");
+        return -1;
+    }
+
+    build_virtio_net_hdr((struct virtio_net_hdr *)p, 0, 0, 0, 0, 0, 0); // No special flags or GSO
+    build_eth_frame(p += sizeof(struct virtio_net_hdr), (uint8_t[]){0xFF,0xFF,0xFF,0xFF,0xFF,0xFF}, (uint8_t[]){0xDE,0xAD,0xBE,0xEF,0x00,0x01}, ETH_P_IP, data, length);
+    build_arp_response(p += sizeof(struct eth_hdr), (uint8_t[]){0xDE,0xAD,0xBE,0xEF,0x00,0x01}, ntohl(*(uint32_t*)my_ip), (uint8_t[]){0xFF,0xFF,0xFF,0xFF,0xFF,0xFF}, 0); // Example ARP response
+    mem_copy(p + sizeof(struct arp_hdr), data, length); // Copy actual payload after ARP
+
+    virt_mmio_net_send(device, data, length);
+    uart_puts("Data sent, waiting for completion...\n");
+
+    // Wait for the device to process the TX descriptor
+    while(1) {
+        mem_barrier();
+        if(tx_queue->used.idx > 0) {
+            uart_puts("Device processed TX descriptor.\n");
+            // Acknowledge the used descriptor
+            tx_queue->used.idx++;
+            break;
+        }
+    }
+
+    return 0;
 }
 
 
@@ -311,7 +432,8 @@ void virt_find_all_devices(void) {
                 uint8_t mac_buf[6];
                 virt_mmio_net_get_mac_address(device, mac_buf);
                 
-                virt_mmio_net_poll_rx(device, NULL, 2048); // Example: Poll for received data (replace with actual buffer and length)
+                // virt_mmio_net_poll_rx(device, NULL, 2048); // Example: Poll for received data (replace with actual buffer and length)
+                virt_mmio_net_tx(device, (const uint8_t*)"Hello, Virtio!", 14); // Example: Send data (replace with actual data and length)
                 break;
             case 2:
                 uart_puts("Found Virtio Block Device.\n");
