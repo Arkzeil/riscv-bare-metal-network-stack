@@ -27,6 +27,7 @@ _start:
     addi    t0, t0, 8        /* advance by 8 bytes (for RV64) */
     j       1b
 2:
+    call    relocate_kernel
     /* Call main() */
     call    main
 

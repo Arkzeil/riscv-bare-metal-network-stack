@@ -17,9 +17,6 @@ extern uint8_t __stack_limit[];
 static uint8_t *allocated = (uint8_t*)&__heap_start;
 static uint32_t allocated_pages __attribute__((unused)) = 0;
 
-typedef uint64_t pte_t;
-typedef pte_t* pagetable_t;
-
 void memset(void* dest, uint8_t value, uint32_t size) {
     uint8_t* ptr = (uint8_t*)dest;
     for(uint32_t i = 0; i < size; i++) {
@@ -27,8 +24,58 @@ void memset(void* dest, uint8_t value, uint32_t size) {
     }
 }
 
-void mem_init(void) {
+// tmp page table for booting, it will be identity mapped to va 0x80000000 and also mapped to high half va 0xFFFFFFC080000000
+pte_t boot_page_table[512] __attribute__((aligned(4096)));
 
+static void setup_boot_page_table(void) {
+    // Identity Mapping: VA 0x80000000 -> PA 0x80000000
+    boot_page_table[2] = (BASE_ADDR >> 12 << 10) | PTE_V | PTE_R | PTE_W | PTE_X;
+
+    // High-half Mapping: VA 0xFFFFFFC080000000 -> PA 0x80000000
+    // 0xFFFFFFC080000000[38:30] = 258
+    boot_page_table[258] = (BASE_ADDR >> 12 << 10) | PTE_V | PTE_R | PTE_W | PTE_X;
+}
+
+void relocate_kernel(void) {
+    // 1. Setup the boot page table with identity and high-half mappings
+    setup_boot_page_table();
+
+    // 2. Load the new page table into satp and enable paging
+    uint64_t satp_value = (8ULL << 60) | ((uint64_t)boot_page_table >> 12);
+    __asm__ volatile(
+        "sfence.vma\n"    // Update TLB. Ensure all page table updates are visible before enabling paging
+        "csrw satp, %0\n" // Load the new page table into satp
+        "sfence.vma\n"    // Update TLB. Ensure the new page table is used immediately
+        :: "r"(satp_value) : "memory"
+    );
+
+    // After this point, the kernel is running with paging enabled and can access memory using virtual addresses.
+}
+
+uint8_t mem_init(void) {
+    pagetable_t root_page_table = (pagetable_t)mem_alloc(4096); 
+    memset(root_page_table, 0, 4096);
+
+    if(root_page_table == NULL) {
+        // Handle memory allocation failure (e.g., log an error, halt the system, etc.)
+        return -1;
+    }
+
+    // Identity map the first 1GB of physical memory(for kernel) with RWX permissions
+    uint64_t pa = 0x80000000;
+    root_page_table[2] = ((pa >> 12) << 10) | PTE_R | PTE_W | PTE_X | PTE_V;
+
+    // Set the satp register to point to the root page table and enable paging
+    // Mode = 8 for Sv39, ASID = 0 (not used), PPN = root_page_table >> 12
+    uint64_t satp_value = (8ULL << 60) | ((uint64_t)root_page_table >> 12);
+    __asm__ volatile(
+        "sfence.vma\n"    // Update TLB. Ensure all page table updates are visible before enabling paging
+        "csrw satp, %0\n" // Load the new page table into satp
+        "sfence.vma\n"    // Update TLB. Ensure the new page table is used immediately
+        :: "r"(satp_value) : "memory"
+    );
+
+    return 0;
 }
 
 void map_page(pagetable_t root, uint64_t va, uint64_t pa, uint64_t flags) {
@@ -53,6 +100,28 @@ void map_page(pagetable_t root, uint64_t va, uint64_t pa, uint64_t flags) {
     // Set the final PTE to point to the physical address with the given flags
     uint64_t vpn0 = (va >> 12) & 0x1FF;
     pt[vpn0] = ((pa >> 12) << 10) | flags | PTE_V;
+}
+
+void va2pa(pagetable_t root, uint64_t va, uint64_t *pa) {
+    pagetable_t pt = root;
+    for (int level = 2; level > 0; level--) {
+        uint64_t vpn = (va >> (12 + level * 9)) & 0x1FF;
+        pte_t pte = pt[vpn];
+        
+        if (!(pte & PTE_V)) {
+            *pa = 0; // Not mapped
+            return;
+        }
+        pt = (pagetable_t)((pte >> 10) << 12);
+    }
+    uint64_t vpn0 = (va >> 12) & 0x1FF;
+    pte_t final_pte = pt[vpn0];
+    
+    if (!(final_pte & PTE_V)) {
+        *pa = 0; // Not mapped
+        return;
+    }
+    *pa = ((final_pte >> 10) << 12) | (va & 0xFFF); // Combine with page offset
 }
 
 void *mem_alloc(uint32_t size) {

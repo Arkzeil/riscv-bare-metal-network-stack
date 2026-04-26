@@ -2,6 +2,9 @@ OUTPUT_ARCH("riscv")
 
 ENTRY(_start)
 
+BASE_ADDR = 0x80000000;
+VIRT_OFFSET = 0xFFFFFFC000000000;
+
 PHDRS {
     text PT_LOAD FLAGS(5);   /* R + X = 4 + 1 */
     data PT_LOAD FLAGS(6);   /* R + W = 4 + 2 */
@@ -9,7 +12,7 @@ PHDRS {
 
 MEMORY
 {
-    RAM (rwx) : ORIGIN = 0x80000000, LENGTH = 128M
+    RAM (rwx) : ORIGIN = BASE_ADDR + VIRT_OFFSET, LENGTH = 128M
 }
 
 SECTIONS{
@@ -19,13 +22,15 @@ SECTIONS{
     /* C stack should start at address 0x80000000 and grow downwards, since hardware loads our kernel to address 0x80000000 and up, stack can safely run from 0x80000000 and downwards*/
     /* 0x80000 is our where our .text start*/
 
-    . = 0x80000000;
+    . = BASE_ADDR + VIRT_OFFSET;
 
-    .text : {
+    /* VMA: BASE_ADDR + VIRT_OFFSET LMA: BASE_ADDR*/
+    .text : AT(BASE_ADDR) {
         KEEP(*(.text.entry))      /* put _start here */
         *(.text*)           /* rest of the codes */
     } > RAM :text
 
+    /* Only relocate .text for simpilcity */
     .rodata : {
         *(.rodata*)
     } > RAM :text
@@ -52,8 +57,8 @@ SECTIONS{
     /* Heap and Stack are not sections and are not loaded */
     
     /* heap starts from the end of bss */
-    __heap_start = _end;
+    PROVIDE(__heap_start = _end);
     /* stack starts from the very top of memory */
-    __stack_limit = ORIGIN(RAM) + LENGTH(RAM) - 0x4000; /* Bottom of 16KB stack */
-    __stack_top = ORIGIN(RAM) + LENGTH(RAM);
+    PROVIDE(__stack_limit = ORIGIN(RAM) + LENGTH(RAM) - 0x4000); /* Bottom of 16KB stack */
+    PROVIDE(__stack_top = ORIGIN(RAM) + LENGTH(RAM));
 }

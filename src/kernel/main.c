@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include "kernel/mem.h"
 #include "kernel/uart.h"
 #include "kernel/dtb.h"
 #include "driver/virt_mmio.h"
@@ -17,8 +18,20 @@ void taskB(void){
     }
 }
 */
+
+// void check_m_mode(void) {
+//     uint64_t mstatus;
+//     uint64_t sstatus;
+//     __asm__ volatile("csrr %0, mstatus" : "=r"(mstatus));
+//     __asm__ volatile("csrr %0, sstatus" : "=r"(sstatus));
+// }
+
 void main(void) {
-    mem_init();
+    // check_m_mode();
+    if (mem_init() != 0) {
+        uart_puts("Memory initialization failed!\n");
+        return;
+    }
     // volatile uint64_t counter = 0;
     char buf[10];
 
