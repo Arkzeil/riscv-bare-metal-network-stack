@@ -251,9 +251,13 @@ void virt_mmio_net_send(virt_mmio_device_t* device, const uint8_t* data, uint32_
     tx_queue->desc[desc_index].flags &= ~VIRTQ_DESC_F_AVAIL; // Mark descriptor as not used by device
     tx_queue->desc[desc_index].len = length;
     // Update available ring (available to device to consume)
+    tx_queue->avail.ring[tx_queue->avail.idx % DESC_QUEUE_SIZE] = desc_index;
     tx_queue->avail.idx++;
 
-    w32((uint32_t*)((uintptr_t)device + VIRTIO_MMIO_QUEUE_NOTIFY), 1);
+    uint32_t *mmio = (uint32_t *)((uintptr_t)device);
+    uint32_t *driver_queue_select = mmio + (VIRTIO_MMIO_QUEUE_SEL / 4);
+    w32(driver_queue_select, 1);
+    w32((uint32_t*)((uintptr_t)device + (VIRTIO_MMIO_QUEUE_NOTIFY / 4)), 1);
 }
 
 void virt_mmio_net_poll_rx(virt_mmio_device_t* device, uint8_t* buffer, uint32_t length) {
@@ -432,8 +436,8 @@ void virt_find_all_devices(void) {
                 uint8_t mac_buf[6];
                 virt_mmio_net_get_mac_address(device, mac_buf);
                 
-                // virt_mmio_net_poll_rx(device, NULL, 2048); // Example: Poll for received data (replace with actual buffer and length)
-                virt_mmio_net_tx(device, (const uint8_t*)"Hello, Virtio!", 14); // Example: Send data (replace with actual data and length)
+                virt_mmio_net_poll_rx(device, NULL, 2048); // Example: Poll for received data (replace with actual buffer and length)
+                // virt_mmio_net_tx(device, (const uint8_t*)"Hello, Virtio!", 14); // Example: Send data (replace with actual data and length)
                 break;
             case 2:
                 uart_puts("Found Virtio Block Device.\n");

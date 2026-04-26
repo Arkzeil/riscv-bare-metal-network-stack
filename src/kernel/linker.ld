@@ -46,19 +46,14 @@ SECTIONS{
         *(.bss*)
         *(COMMON)
         _ebss = .;          /* bss end */
+        _end = .;
     } > RAM :data
 
     /* Heap and Stack are not sections and are not loaded */
-
-    /* Define a simple stack region after BSS */
-    . = ALIGN(8);
-    . += 0x4000;         /* 16 KB stack */    
-    __stack_top = .;
-
-    . = ALIGN(8);
-    __heap_start = .;
-    . = ORIGIN(RAM) + LENGTH(RAM);
-    __heap_end = .;
-
-    _end = .;
+    
+    /* heap starts from the end of bss */
+    __heap_start = _end;
+    /* stack starts from the very top of memory */
+    __stack_limit = ORIGIN(RAM) + LENGTH(RAM) - 0x4000; /* Bottom of 16KB stack */
+    __stack_top = ORIGIN(RAM) + LENGTH(RAM);
 }

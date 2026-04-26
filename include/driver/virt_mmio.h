@@ -193,6 +193,7 @@ struct virtq_used {
     uint16_t flags;
     uint16_t idx;
     struct virtq_used_elem ring[DESC_QUEUE_SIZE];
+    // uint16_t avail_event; // only if VIRTIO_F_RING_EVENT_IDX, otherwise driver can ignore
 };
 
 // virtio queue

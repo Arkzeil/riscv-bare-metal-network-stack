@@ -18,6 +18,7 @@ void taskB(void){
 }
 */
 void main(void) {
+    mem_init();
     // volatile uint64_t counter = 0;
     char buf[10];
 
