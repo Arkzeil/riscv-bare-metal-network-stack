@@ -9,6 +9,8 @@
 #endif
 
 #define BASE_ADDR       0x80000000
+#define VIRT_OFFSET     0xFFFFFFC000000000UL
+#define KERNEL_BASE_VA  (BASE_ADDR + VIRT_OFFSET)
 
 #define MAX_HEAP_SIZE   0x1000000 // 16 MB
 #define PAGE_SIZE       4096

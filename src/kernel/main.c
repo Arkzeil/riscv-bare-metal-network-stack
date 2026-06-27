@@ -29,7 +29,7 @@ void taskB(void){
 void main(void) {
     // check_m_mode();
     if (mem_init() != 0) {
-        uart_puts("Memory initialization failed!\n");
+        // uart_puts("Memory initialization failed!\n");
         return;
     }
     // volatile uint64_t counter = 0;

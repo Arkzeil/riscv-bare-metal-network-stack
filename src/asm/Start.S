@@ -28,6 +28,42 @@ _start:
     j       1b
 2:
     call    relocate_kernel
+
+    /* Return to S-mode */
+
+    /* Disable interrupt */
+    csrw mie, zero
+
+    /* Configure PMP (Grant S-mode full access to all memory) */
+    /* Range: 0 to (1 << 54)-1 (covers all possible addresses) */
+    li t0, -1
+    csrw pmpaddr0, t0
+    li t1, 0x8f         /* NAPOT | R | W | X */
+    csrw pmpcfg0, t1
+
+    /* Delegate interrupts and exceptions to S-mode */
+    /* This allows S-mode to handle its own Page Faults and Timer interrupts */
+    li t0, 0xffff
+    csrw medeleg, t0
+    csrw mideleg, t0
+
+    /* Set mstatus.MPP to 1 (Supervisor Mode) */
+    /* Clear both MPP bits first, then set MPP=S. */
+    li t0, (3 << 11)
+    csrc mstatus, t0
+    li t0, (1 << 11)
+    csrs mstatus, t0
+
+    /* Set mepc to the VIRTUAL address of kernel_main */
+    /* Because of the linker script, 'la' will load the 0xFFFFFFC0... address */
+    la t0, kernel_entry
+    csrw mepc, t0
+
+    /* Drop to S-mode and jump to mepc */
+    mret
+
+kernel_entry:
+    la      sp, __stack_top
     /* Call main() */
     call    main
 
