@@ -44,7 +44,7 @@ static void setup_uart_mapping(pagetable_t root) {
 }
 
 static void setup_boot_page_table(void) {
-    // Identity Mapping: VA 0x80000000 -> PA 0x80000000
+    // Identity Mapping(Virtual Address = Physical Address): VA 0x80000000 -> PA 0x80000000
     // so that we can continue to execute code after enabling paging
     boot_page_table[2] = (BASE_ADDR >> 12 << 10) | PTE_V | PTE_R | PTE_W | PTE_X;
 
@@ -80,12 +80,12 @@ uint8_t mem_init(void) {
     }
     memset(root_page_table, 0, 4096);
 
-    // Map the first 1GB both identity and high-half. The high-half mapping must
+    // Map the first 1GB both identity and high-half kernel. The high-half mapping must
     // survive the satp switch because the kernel is executing there.
     uint64_t pa = 0x80000000;
     root_page_table[2] = ((pa >> 12) << 10) | PTE_R | PTE_W | PTE_X | PTE_V;
     // 258 is the index for 0xFFFFFFC080000000 in the root page table for Sv39
-    // 258 x 0x40000000 -> 0xFFFFFFC080000000
+    // 258 x 0x40000000 -> 0xFFFFFFC080000000 (38:0) = 0x4080000000
     root_page_table[258] = ((pa >> 12) << 10) | PTE_R | PTE_W | PTE_X | PTE_V;
 
     setup_uart_mapping(root_page_table);
@@ -99,6 +99,8 @@ uint8_t mem_init(void) {
         "sfence.vma\n"    // Update TLB. Ensure the new page table is used immediately
         :: "r"(satp_value) : "memory"
     );
+
+    //TODO: free the boot page table
 
     return 0;
 }

@@ -2,6 +2,7 @@
 #include "kernel/mem.h"
 #include "kernel/uart.h"
 #include "kernel/dtb.h"
+#include "kernel/trap.h"
 #include "driver/virt_mmio.h"
 /*
 void taskA(void){
@@ -37,6 +38,15 @@ void main(void) {
 
     uart_init(115200, 100000000); // Initialize UART with 115200 baud rate and 100MHz clock
     uart_puts("Hello, World!\n");
+    
+    trap_init();
+    uart_puts("Trap handler initialized.\n");
+    
+    // TEST: Trigger an exception (Load Page Fault) to verify the trap handler works!
+    uart_puts("Triggering a page fault for testing...\n");
+    volatile uint64_t *bad_ptr = (volatile uint64_t *)0;
+    uint64_t val __attribute__((unused)) = *bad_ptr;
+
     uart_gets(buf, sizeof(buf));
     uart_puts("You entered: ");
     uart_puts(buf);
