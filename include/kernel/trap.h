@@ -49,6 +49,9 @@ void handle_timer_interrupt(struct trap_context *ctx);
 void handle_external_interrupt(struct trap_context *ctx);
 void handle_exception(struct trap_context *ctx);
 
+/* Exception hanlders*/
+void handle_load_page_fault(struct trap_context *ctx);
+
 /* Helper inline functions to enable/disable interrupts */
 static inline void intr_on(void) {
     /* Set SIE (Supervisor Interrupt Enable) bit in sstatus */

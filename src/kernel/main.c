@@ -4,7 +4,8 @@
 #include "kernel/dtb.h"
 #include "kernel/trap.h"
 #include "driver/virt_mmio.h"
-/*
+#include "kernel/timer.h"
+
 void taskA(void){
     while(1){
         uart_puts("Task A is running.\n");
@@ -18,7 +19,7 @@ void taskB(void){
         for (int i = 0; i < 1000000; i++); // Simple delay loop
     }
 }
-*/
+
 
 // void check_m_mode(void) {
 //     uint64_t mstatus;
@@ -41,18 +42,21 @@ void main(void) {
     
     trap_init();
     uart_puts("Trap handler initialized.\n");
+    // this can't be set in S mode, I need ecall and a M mode trap handler to set it
+    set_timer(1000000); // Set timer for 1,000,000 cycles 
+    enable_timer_interrupt();
     
     // TEST: Trigger an exception (Load Page Fault) to verify the trap handler works!
-    uart_puts("Triggering a page fault for testing...\n");
-    volatile uint64_t *bad_ptr = (volatile uint64_t *)0;
-    uint64_t val __attribute__((unused)) = *bad_ptr;
+    // uart_puts("Triggering a page fault for testing...\n");
+    // volatile uint64_t *bad_ptr = (volatile uint64_t *)0;
+    // uint64_t val __attribute__((unused)) = *bad_ptr;
 
-    uart_gets(buf, sizeof(buf));
-    uart_puts("You entered: ");
-    uart_puts(buf);
-    uart_putc('\n');
+    // uart_gets(buf, sizeof(buf));
+    // uart_puts("You entered: ");
+    // uart_puts(buf);
+    // uart_putc('\n');
 
-    fdt_traverse(dtb_callback);
+    // fdt_traverse(dtb_callback);
 
     virt_find_all_devices();
     
