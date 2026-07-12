@@ -7,7 +7,9 @@ static inline void set_timer(uint64_t interval) {
     uint64_t current_time;
     __asm__ volatile("csrr %0, time" : "=r"(current_time));
     uint64_t next_time = current_time + interval;
-    __asm__ volatile("csrw stimecmp, %0" :: "r"(next_time));
+    register uint64_t a0 __asm__("a0") = next_time;
+    register uint64_t a7 __asm__("a7") = 0;
+    __asm__ volatile("ecall" : : "r"(a0), "r"(a7) : "memory");
 }
 
 static inline uint64_t get_time(void) {

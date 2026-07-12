@@ -34,6 +34,18 @@ _start:
     /* Disable interrupt */
     csrw mie, zero
 
+    /* Set mtvec to the physical address of mtrap_vector */
+    la t0, mtrap_vector
+    csrw mtvec, t0
+
+    /* Set mscratch to the physical address of m_stack_top */
+    la t0, m_stack_top
+    csrw mscratch, t0
+
+    /* Enable access to time CSR for S-mode */
+    li t0, -1
+    csrw mcounteren, t0
+
     /* Configure PMP (Grant S-mode full access to all memory) */
     /* Range: 0 to (1 << 54)-1 (covers all possible addresses) */
     li t0, -1
@@ -42,9 +54,13 @@ _start:
     csrw pmpcfg0, t1
 
     /* Delegate interrupts and exceptions to S-mode */
-    /* This allows S-mode to handle its own Page Faults and Timer interrupts */
-    li t0, 0xffff
+    /* the ecall in S-mode is not delegated (still handled by m-mode) */
+    li t0, 0xfdff
     csrw medeleg, t0
+    /* This allows S-mode to handle its own Page Faults and Timer interrupts: */
+    /* STIP(Supervisor Timer Interrupt), SSIP(Supervisor Software Interrupt) */ 
+    /* and SEIP(Supervisor External Interrupt)*/
+    li t0, 0x222
     csrw mideleg, t0
 
     /* Set mstatus.MPP to 1 (Supervisor Mode) */

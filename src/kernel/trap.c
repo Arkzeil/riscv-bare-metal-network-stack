@@ -1,6 +1,7 @@
 #include "kernel/trap.h"
 #include "kernel/uart.h"
 #include "kernel/timer.h"
+#include "kernel/process.h"
 
 static const char * const exception_names[] = {
     [EXC_INST_MISALIGNED]   = "Instruction Address Misaligned",
@@ -23,15 +24,6 @@ static const char * const interrupt_names[] = {
     [IRQ_S_TIMER]  = "Supervisor Timer Interrupt",
     [IRQ_S_EXT]    = "Supervisor External Interrupt"
 };
-
-static void print_hex64(uint64_t val) {
-    uart_puts("0x");
-    for (int i = 60; i >= 0; i -= 4) {
-        uint64_t t = (val >> i) & 0xF;
-        t += (t > 9 ? 0x37 : 0x30);
-        uart_putc((char)t);
-    }
-}
 
 static void dump_registers(struct trap_context *ctx) {
     uart_puts("--- Register Dump ---\n");
@@ -112,11 +104,13 @@ void __attribute__((weak)) handle_software_interrupt(struct trap_context *ctx) {
 }
 
 void __attribute__((weak)) handle_timer_interrupt(struct trap_context *ctx) {
-    uart_puts("Timer interrupt received\n");
-    // In S-mode, we cannot directly clear the timer interrupt source (which is M-mode mtimecmp).
-    // Usually we disable the supervisor timer interrupt enable (STIE in sie) or request a new 
-    // timer interrupt from SBI. Here we temporarily disable STIE to avoid infinite loop:
-    disable_timer_interrupt();
+    uart_puts("Current time: ");
+    uart_dec64(get_time());
+    uart_puts("\n");
+    // Set timer for 1,000,000 cycles (which clears the pending supervisor timer interrupt)
+    set_timer(10000000);
+    // Yield the CPU to the next process
+    yield();
 }
 
 void __attribute__((weak)) handle_external_interrupt(struct trap_context *ctx) {
