@@ -42,7 +42,10 @@ void uart_putc(char c);
 char uart_getc(void);
 void uart_puts(const char *str);
 int uart_gets(char *buf, int maxlen);
+void uart_dec(unsigned int num);
+void uart_dec64(uint64_t num);
 void uart_b2x(unsigned int b);
 void uart_puts_fixed(const char *str, size_t len);
+void print_hex64(uint64_t val);
 
 #endif

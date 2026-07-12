@@ -49,6 +49,46 @@ int uart_gets(char *buf, int maxlen) {
     return i;
 }
 
+void uart_dec(unsigned int num) {
+    if (num == 0) {
+        uart_putc('0');
+        return;
+    }
+
+    char buffer[10]; // Enough to hold the decimal representation of a 32-bit integer
+    int i = 0;
+
+    while (num > 0) {
+        buffer[i++] = '0' + (num % 10);
+        num /= 10;
+    }
+
+    // The digits are in reverse order, so print them in reverse
+    for (int j = i - 1; j >= 0; j--) {
+        uart_putc(buffer[j]);
+    }
+}
+
+void uart_dec64(uint64_t num) {
+    if (num == 0) {
+        uart_putc('0');
+        return;
+    }
+
+    char buffer[20]; // Enough to hold the decimal representation of a 64-bit integer
+    int i = 0;
+
+    while (num > 0) {
+        buffer[i++] = '0' + (num % 10);
+        num /= 10;
+    }
+
+    // The digits are in reverse order, so print them in reverse
+    for (int j = i - 1; j >= 0; j--) {
+        uart_putc(buffer[j]);
+    }
+}
+
 void uart_b2x(unsigned int b){
     int i;
     unsigned int t;
@@ -66,5 +106,14 @@ void uart_b2x(unsigned int b){
 void uart_puts_fixed(const char *str, size_t len) {
     for (size_t i = 0; i < len; i++) {
         uart_putc(str[i]);
+    }
+}
+
+void print_hex64(uint64_t val) {
+    uart_puts("0x");
+    for (int i = 60; i >= 0; i -= 4) {
+        uint64_t t = (val >> i) & 0xF;
+        t += (t > 9 ? 0x37 : 0x30);
+        uart_putc((char)t);
     }
 }
