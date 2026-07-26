@@ -5,18 +5,25 @@
 #include "kernel/trap.h"
 #include "driver/virt_mmio.h"
 #include "kernel/timer.h"
+#include "kernel/process.h"
 
 void taskA(void){
-    while(1){
-        uart_puts("Task A is running.\n");
-        for (int i = 0; i < 1000000; i++); // Simple delay loop
+    for (int i = 0; i < 5; i++) {
+        uart_puts("Task A is running (step ");
+        uart_putc('0' + i);
+        uart_puts(").\n");
+        for (volatile int d = 0; d < 10000000; d++); // Delay
+        // yield();
     }
 }
 
 void taskB(void){
-    while(1){
-        uart_puts("Task B is running.\n");
-        for (int i = 0; i < 1000000; i++); // Simple delay loop
+    for (int i = 0; i < 5; i++) {
+        uart_puts("Task B is running (step ");
+        uart_putc('0' + i);
+        uart_puts(").\n");
+        for (volatile int d = 0; d < 10000000; d++); // Delay
+        // yield();
     }
 }
 
@@ -42,9 +49,9 @@ void main(void) {
     
     trap_init();
     uart_puts("Trap handler initialized.\n");
-    // this can't be set in S mode, I need ecall and a M mode trap handler to set it
     set_timer(1000000); // Set timer for 1,000,000 cycles 
     enable_timer_interrupt();
+    intr_on();
     
     // TEST: Trigger an exception (Load Page Fault) to verify the trap handler works!
     // uart_puts("Triggering a page fault for testing...\n");
@@ -58,8 +65,18 @@ void main(void) {
 
     // fdt_traverse(dtb_callback);
 
-    virt_find_all_devices();
+    // virt_find_all_devices();
     
+    // Initialize the process subsystem and schedule the tasks
+    uart_puts("Initializing process subsystem...\n");
+    proc_init();
+    
+    uart_puts("Creating Task A and Task B...\n");
+    proc_create(taskA, "taskA");
+    proc_create(taskB, "taskB");
+    
+    uart_puts("Starting scheduler...\n");
+    scheduler();
 
     uart_puts("End of main.\n");
 }

@@ -26,6 +26,7 @@
 #define EXC_LOAD_PAGE_FAULT   13
 #define EXC_STORE_PAGE_FAULT  15
 
+struct trap_context;
 typedef void (*trap_handler_t)(struct trap_context *ctx);
 
 /* Trap context structure saved on the stack */
