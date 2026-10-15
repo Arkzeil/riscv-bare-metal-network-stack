@@ -13,7 +13,18 @@
 #define KERNEL_BASE_VA  (BASE_ADDR + VIRT_OFFSET)
 
 #define MAX_HEAP_SIZE   0x1000000 // 16 MB
-#define PAGE_SIZE       4096
+#define PGSHIFT         12
+#define PAGE_SIZE       (1UL << PGSHIFT)
+
+// from xv6-------------
+// shift a physical address to the right place for a PTE.
+#define PA2PTE(pa)      ((((uint64_t)(pa)) >> PGSHIFT) << 10)
+#define PTE2PA(pte)     ((((uint64_t)(pte)) >> 10) << PGSHIFT)
+// extract the three 9-bit page table indices from a virtual address.
+#define PXMASK         0x1FFUL // 9 bits
+#define PXSHIFT(level) (PGSHIFT + (9 * (level)))
+#define PX(level, va)  ((((uint64_t)(va)) >> PXSHIFT(level)) & PXMASK)
+//-----------------------
 
 typedef uint64_t        pte_t;
 typedef pte_t*          pagetable_t;

@@ -1,5 +1,6 @@
 #include "kernel/mem.h"
 #include "kernel/utils.h"
+#include "driver/virt_mmio.h"
 
 // Get the symbol _end from the linker script
 // these two extern symbols from linker script can be used in 
@@ -32,7 +33,7 @@ void memset(void* dest, uint8_t value, uint32_t size) {
 }
 
 // tmp page table for booting, it will be identity mapped to va 0x80000000 and also mapped to high half va 0xFFFFFFC080000000
-pte_t boot_page_table[512] __attribute__((aligned(4096)));
+pte_t boot_page_table[512] __attribute__((aligned(PAGE_SIZE)));
 
 static void setup_uart_mapping(pagetable_t root) {
     // Map UART0 at 0x10000000 to a high-half virtual address, e.g., 0xFFFFFFC100000000
@@ -40,28 +41,36 @@ static void setup_uart_mapping(pagetable_t root) {
     uint64_t uart_va = 0x10000000;
     uint64_t uart_pa = 0x10000000;
     map_page(root, uart_va, uart_pa, PTE_R | PTE_W | PTE_V | PTE_X);
-    // boot_page_table[257] = (uart_pa >> 12 << 10) | PTE_V | PTE_R | PTE_W | PTE_X;
+    // boot_page_table[257] = PA2PTE(uart_pa) | PTE_V | PTE_R | PTE_W | PTE_X;
+}
+
+static void setup_virtio_mappings(pagetable_t root) {
+    // Identity-map every QEMU virt VirtIO MMIO slot for the driver's scan.
+    for (uint32_t slot = 1; slot <= VIRTIO_SLOTS; slot++) {
+        uint64_t addr = VIRT_MMIO(slot * VIRTIO_SIZE);
+        map_page(root, addr, addr, PTE_R | PTE_W);
+    }
 }
 
 static void setup_boot_page_table(void) {
     // Identity Mapping(Virtual Address = Physical Address): VA 0x80000000 -> PA 0x80000000
     // so that we can continue to execute code after enabling paging
-    boot_page_table[2] = (BASE_ADDR >> 12 << 10) | PTE_V | PTE_R | PTE_W | PTE_X;
+    boot_page_table[PX(2, BASE_ADDR)] = PA2PTE(BASE_ADDR) | PTE_V | PTE_R | PTE_W | PTE_X;
 
     // High-half Mapping: VA 0xFFFFFFC080000000 -> PA 0x80000000
     // 0xFFFFFFC080000000[38:30] = 258
     // This allows the kernel to access its own code and data using high-half addresses after paging is enabled.
-    boot_page_table[258] = (BASE_ADDR >> 12 << 10) | PTE_V | PTE_R | PTE_W | PTE_X;
+    boot_page_table[PX(2, KERNEL_BASE_VA)] = PA2PTE(BASE_ADDR) | PTE_V | PTE_R | PTE_W | PTE_X;
 }
 
 void relocate_kernel(void) {
     // 1. Setup the boot page table with identity and high-half mappings
     setup_boot_page_table();
     setup_uart_mapping(boot_page_table);
-
+    setup_virtio_mappings(boot_page_table);
     // 2. Load the new page table into satp and enable paging
     // Mode = 8 for Sv39, ASID = 0 (not used), PPN = boot_page_table >> 12
-    uint64_t satp_value = (8ULL << 60) | (virt_to_phys((uint64_t)boot_page_table) >> 12);
+    uint64_t satp_value = (8ULL << 60) | (virt_to_phys((uint64_t)boot_page_table) >> PGSHIFT);
     __asm__ volatile(
         "sfence.vma\n"    // Update TLB. Ensure all page table updates are visible before enabling paging
         "csrw satp, %0\n" // Load the new page table into satp
@@ -73,26 +82,27 @@ void relocate_kernel(void) {
 }
 
 uint8_t mem_init(void) {
-    pagetable_t root_page_table = (pagetable_t)mem_alloc(4096); 
+    pagetable_t root_page_table = (pagetable_t)mem_alloc(PAGE_SIZE);
     if(root_page_table == NULL) {
         // Handle memory allocation failure (e.g., log an error, halt the system, etc.)
         return -1;
     }
-    memset(root_page_table, 0, 4096);
+    memset(root_page_table, 0, PAGE_SIZE);
 
     // Map the first 1GB both identity and high-half kernel. The high-half mapping must
     // survive the satp switch because the kernel is executing there.
-    uint64_t pa = 0x80000000;
-    root_page_table[2] = ((pa >> 12) << 10) | PTE_R | PTE_W | PTE_X | PTE_V;
+    uint64_t pa = BASE_ADDR;
+    root_page_table[PX(2, BASE_ADDR)] = PA2PTE(pa) | PTE_R | PTE_W | PTE_X | PTE_V;
     // 258 is the index for 0xFFFFFFC080000000 in the root page table for Sv39
     // 258 x 0x40000000 -> 0xFFFFFFC080000000 (38:0) = 0x4080000000
-    root_page_table[258] = ((pa >> 12) << 10) | PTE_R | PTE_W | PTE_X | PTE_V;
+    root_page_table[PX(2, KERNEL_BASE_VA)] = PA2PTE(pa) | PTE_R | PTE_W | PTE_X | PTE_V;
 
     setup_uart_mapping(root_page_table);
+    setup_virtio_mappings(root_page_table);
 
     // Set the satp register to point to the root page table and enable paging
     // Mode = 8 for Sv39, ASID = 0 (not used), PPN = root_page_table >> 12
-    uint64_t satp_value = (8ULL << 60) | (virt_to_phys((uint64_t)root_page_table) >> 12);
+    uint64_t satp_value = (8ULL << 60) | (virt_to_phys((uint64_t)root_page_table) >> PGSHIFT);
     __asm__ volatile(
         "sfence.vma\n"    // Update TLB. Ensure all page table updates are visible before enabling paging
         "csrw satp, %0\n" // Load the new page table into satp
@@ -109,46 +119,46 @@ void map_page(pagetable_t root, uint64_t va, uint64_t pa, uint64_t flags) {
     pagetable_t pt = root;
     for (int level = 2; level > 0; level--) {
         // Calculate the VPN for the current level
-        uint64_t vpn = (va >> (12 + level * 9)) & 0x1FF;
+        uint64_t vpn = PX(level, va);
         pte_t *pte = &pt[vpn];
         
         if (*pte & PTE_V) {
             // next level page table already exists, get the PPN of it
-            pt = (pagetable_t)((*pte >> 10) << 12);
+            pt = (pagetable_t)PTE2PA(*pte);
         } else {
             // allocate a new page for the next level page table
-            pagetable_t next_pt = (pagetable_t)mem_alloc(4096);
-            memset(next_pt, 0, 4096);
+            pagetable_t next_pt = (pagetable_t)mem_alloc(PAGE_SIZE);
+            memset(next_pt, 0, PAGE_SIZE);
             // point to next level page table, set valid bit
-            *pte = ((virt_to_phys((uint64_t)next_pt) >> 12) << 10) | PTE_V;
+            *pte = PA2PTE(virt_to_phys((uint64_t)next_pt)) | PTE_V;
             pt = next_pt;
         }
     }
     // Set the final PTE to point to the physical address with the given flags
-    uint64_t vpn0 = (va >> 12) & 0x1FF;
-    pt[vpn0] = ((pa >> 12) << 10) | flags | PTE_V;
+    uint64_t vpn0 = PX(0, va);
+    pt[vpn0] = PA2PTE(pa) | flags | PTE_V;
 }
 
 void va2pa(pagetable_t root, uint64_t va, uint64_t *pa) {
     pagetable_t pt = root;
     for (int level = 2; level > 0; level--) {
-        uint64_t vpn = (va >> (12 + level * 9)) & 0x1FF;
+        uint64_t vpn = PX(level, va);
         pte_t pte = pt[vpn];
         
         if (!(pte & PTE_V)) {
             *pa = 0; // Not mapped
             return;
         }
-        pt = (pagetable_t)((pte >> 10) << 12);
+        pt = (pagetable_t)(PTE2PA(pte));
     }
-    uint64_t vpn0 = (va >> 12) & 0x1FF;
+    uint64_t vpn0 = PX(0, va);
     pte_t final_pte = pt[vpn0];
     
     if (!(final_pte & PTE_V)) {
         *pa = 0; // Not mapped
         return;
     }
-    *pa = ((final_pte >> 10) << 12) | (va & 0xFFF); // Combine with page offset
+    *pa = PTE2PA(final_pte) | (va & (PAGE_SIZE - 1)); // Combine with page offset
 }
 
 void *mem_alloc(uint32_t size) {
@@ -157,8 +167,8 @@ void *mem_alloc(uint32_t size) {
 
     // A basic heuristic to request page alignment for larger allocations,
     // which are likely for DMA buffers or page-sized structures.
-    if (size >= 4096) {
-        alignment = 4096;
+    if (size >= PAGE_SIZE) {
+        alignment = PAGE_SIZE;
     }
 
     // Ensure alignment is a power of two

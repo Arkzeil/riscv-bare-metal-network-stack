@@ -16,6 +16,8 @@ trap_vector:
 
     # 2. Save general-purpose registers (except x0, which is always 0)
     sd ra,   8(sp)   # x1 = return address
+    # Save t0 before using it to recover the original stack pointer.
+    sd t0,   40(sp)  # x5 = t0
     
     # Save the original stack pointer (before the trap) in regs[2] slot (sp)
     addi t0, sp, 288
@@ -23,9 +25,6 @@ trap_vector:
     
     sd gp,   24(sp)  # x3 = gp
     sd tp,   32(sp)  # x4 = tp
-    
-    # Save t0 (x5) which we just used as temporary
-    sd t0,   40(sp)
     
     sd t1,   48(sp)  # x6 = t1
     sd t2,   56(sp)  # x7 = t2
