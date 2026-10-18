@@ -2,27 +2,58 @@
 #include "kernel/utils.h"
 #include "driver/virt_mmio.h"
 
-// Get the symbol _end from the linker script
-// these two extern symbols from linker script can be used in 
-// following codes
-extern void* __heap_start;
+// Linker symbols denote addresses, not stored pointer values.
+extern uint8_t __heap_start[];
 extern uint8_t __stack_limit[];
 
-// get the heap address
-/* 
-    > Linker scripts symbol declarations, by contrast, create an entry in the symbol table 
-    but do not assign any memory to them. Thus "they are an address without a value". 
-    This means that you cannot access the value of a linker script defined symbol - it has no value - 
-    all you can do is use the address of a linker script defined symbol.
-*/
-static uint8_t *allocated = (uint8_t*)&__heap_start;
-static uint32_t allocated_pages __attribute__((unused)) = 0;
+static struct free_page *free_list;
+static uintptr_t heap_start;
+static uintptr_t heap_end;
+static uint32_t free_page_count;
 
 static inline uint64_t virt_to_phys(uint64_t addr) {
     if (addr >= KERNEL_BASE_VA) {
         return addr - VIRT_OFFSET;
     }
     return addr;
+}
+
+static void page_allocator_init(void) {
+    // Use identity-mapped addresses in both M-mode boot and S-mode execution.
+    heap_start = (virt_to_phys((uintptr_t)__heap_start) + PAGE_SIZE - 1)
+                 & ~(PAGE_SIZE - 1);
+    heap_end = heap_start + MAX_HEAP_SIZE;
+    uintptr_t stack_limit = virt_to_phys((uintptr_t)__stack_limit);
+    if (heap_end > stack_limit) {
+        heap_end = stack_limit;
+    }
+    heap_end &= ~(PAGE_SIZE - 1);
+
+    free_list = NULL;
+    free_page_count = 0;
+    // Build an ascending list so initial multi-page allocations are contiguous.
+    for (uintptr_t addr = heap_end; addr > heap_start; ) {
+        addr -= PAGE_SIZE;
+        struct free_page *page = (struct free_page *)addr;
+        page->next = free_list;
+        free_list = page;
+        free_page_count++;
+    }
+}
+
+// The kernel currently uses one hart. Mask S-mode interrupts so a timer-driven
+// context switch cannot interrupt a free-list update, including during boot.
+static uint64_t allocator_intr_off(void) {
+    uint64_t status;
+    __asm__ volatile("csrrc %0, sstatus, %1"
+                     : "=r"(status) : "r"(1UL << 1) : "memory");
+    return status;
+}
+
+static void allocator_intr_restore(uint64_t status) {
+    if (status & (1UL << 1)) {
+        __asm__ volatile("csrs sstatus, %0" :: "r"(1UL << 1) : "memory");
+    }
 }
 
 void memset(void* dest, uint8_t value, uint32_t size) {
@@ -64,6 +95,8 @@ static void setup_boot_page_table(void) {
 }
 
 void relocate_kernel(void) {
+    // Boot MMIO mappings allocate page-table pages before mem_init() runs.
+    page_allocator_init();
     // 1. Setup the boot page table with identity and high-half mappings
     setup_boot_page_table();
     setup_uart_mapping(boot_page_table);
@@ -125,7 +158,8 @@ void map_page(pagetable_t root, uint64_t va, uint64_t pa, uint64_t flags) {
         if (*pte & PTE_V) {
             // next level page table already exists, get the PPN of it
             pt = (pagetable_t)PTE2PA(*pte);
-        } else {
+        }
+        else {
             // allocate a new page for the next level page table
             pagetable_t next_pt = (pagetable_t)mem_alloc(PAGE_SIZE);
             memset(next_pt, 0, PAGE_SIZE);
@@ -162,62 +196,88 @@ void va2pa(pagetable_t root, uint64_t va, uint64_t *pa) {
 }
 
 void *mem_alloc(uint32_t size) {
-    // Default to 8-byte alignment
-    uint32_t alignment = 8;
-
-    // A basic heuristic to request page alignment for larger allocations,
-    // which are likely for DMA buffers or page-sized structures.
-    if (size >= PAGE_SIZE) {
-        alignment = PAGE_SIZE;
-    }
-
-    // Ensure alignment is a power of two
-    if ((alignment & (alignment - 1)) != 0) {
-        // Alignment is not a power of two, cannot proceed
+    if (size == 0) {
         return NULL;
     }
 
-    uintptr_t current_ptr = (uintptr_t)allocated;
-    // Calculate the next aligned address
-    uintptr_t aligned_ptr = (current_ptr + alignment - 1) & ~(alignment - 1);
-    
-    uintptr_t new_allocated_ptr = aligned_ptr + size;
-
-    if ((uint8_t*)new_allocated_ptr > __stack_limit) {
-        return NULL; // Out of memory
+    uint32_t count = ((uint64_t)size + PAGE_SIZE - 1) >> PGSHIFT;
+    uint64_t status = allocator_intr_off();
+    if (count > free_page_count) {
+        allocator_intr_restore(status);
+        return NULL;
     }
 
-    allocated = (uint8_t*)new_allocated_ptr;
-
-    return (void*)aligned_ptr;
-}
-
-void *_sbrk(int increment) {
-    char *prev_heap_ptr = allocated;
-    char *next_heap_ptr = allocated + increment;
-
-    // 1. Get the current Stack Pointer value
-    register char *stack_ptr __asm__("sp");
-
-    // 2. CHECK: Is the new heap address crossing into the stack?
-    // We check against the current sp to prevent hitting the LIVE stack,
-    // and against _stack_limit to ensure we don't steal reserved stack space.
-    if (next_heap_ptr > stack_ptr || next_heap_ptr > __stack_limit) {
-        // Out of memory! 
-        return (void *)-1; 
+    if (count == 1) {
+        struct free_page *page = free_list;
+        free_list = page->next;
+        free_page_count--;
+        allocator_intr_restore(status);
+        return page;
     }
 
-    allocated = next_heap_ptr;
-    return (void *)prev_heap_ptr;
-}
+    // Free-list order changes on free. Check address ranges, rather than
+    // assuming that neighboring list entries are neighboring physical pages.
+    // Note: ideally the kernel should use buddy system or slab allocator for multi-page allocations,
+    // but this is a simple implementation.
+    uintptr_t bytes = (uintptr_t)count * PAGE_SIZE;
+    for (struct free_page *first = free_list; first; first = first->next) {
+        uintptr_t start = (uintptr_t)first;
+        uintptr_t end = start + bytes;
+        if (end > heap_end) {
+            continue;
+        }
+        uint32_t found = 0;
+        for (struct free_page *page = free_list; page; page = page->next) {
+            if ((uintptr_t)page >= start && (uintptr_t)page < end) {
+                found++;
+            }
+        }
+        if (found != count) {
+            continue;
+        }
 
-void *mem_alloc_page() {
-    // Placeholder implementation
+        // Remove the contiguous pages from the free list and return the starting address.
+        struct free_page **link = &free_list;
+        while (*link) {
+            uintptr_t addr = (uintptr_t)*link;
+            if (addr >= start && addr < end) {
+                *link = (*link)->next;
+            }
+            // if the current page is not in the range, move to the next link
+            else {
+                link = &(*link)->next;
+            }
+        }
+        free_page_count -= count;
+        allocator_intr_restore(status);
+        return (void *)start;
+    }
+
+    allocator_intr_restore(status);
     return NULL;
 }
 
+void mem_free(void* page) {
+    uintptr_t addr = virt_to_phys((uintptr_t)page);
+    if (page == NULL || addr < heap_start || addr >= heap_end
+        || (addr & (PAGE_SIZE - 1))) {
+        return;
+    }
+
+    uint64_t status = allocator_intr_off();
+    struct free_page *node = (struct free_page *)addr;
+    node->next = free_list;
+    free_list = node;
+    free_page_count++;
+    allocator_intr_restore(status);
+}
+
+void *mem_alloc_page(void) {
+    return mem_alloc(PAGE_SIZE);
+}
+
 void mem_free_page(void* page) {
-    // Placeholder implementation
+    mem_free(page);
 }
 
 void mem_set(void* dest, uint8_t value, uint32_t size) {
