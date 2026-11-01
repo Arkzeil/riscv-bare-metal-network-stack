@@ -63,9 +63,9 @@ void main(void) {
     // uart_puts(buf);
     // uart_putc('\n');
 
-    // fdt_traverse(dtb_callback);
+    fdt_traverse(dtb_callback);
 
-    // virt_find_all_devices();
+    virt_find_all_devices();
     
     // Initialize the process subsystem and schedule the tasks
     uart_puts("Initializing process subsystem...\n");
